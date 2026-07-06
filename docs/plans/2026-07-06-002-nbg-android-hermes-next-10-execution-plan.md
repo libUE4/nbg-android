@@ -66,7 +66,7 @@ Scope:
 
 - Improve session search result cards with source/type metadata. Implemented first increment: drawer rows now show match type, summary availability, pinned state, and cleaned result snippets.
 - Add session summary index or local summary sidecar. Implemented first increment: history cache now writes a local redacted `session-summary-index.json` sidecar with path, title, snippet, counts, and update time.
-- Add Skill draft UI that uses `nbgReviewLearnedSkillDraft()`. Implemented first review-queue increment: Skills page now exposes a review-only learned Skill draft queue empty state with required evidence and no auto-install/enable promise.
+- Add Skill draft UI that uses `nbgReviewLearnedSkillDraft()`. Implemented review-queue model increment: Android now has a learned Skill draft queue model, JSON parser, state path, Skills page counts/rows, missing-evidence display, dangerous-tier highlight, and no auto-install/enable path.
 - Add Skill Curator metrics: use count, last used, stale, pinned, archive/restore. Implemented first governance increment: Skills page now shows curator counts, review pressure, deletable count, trusted bundled count, and explicitly forbids auto-delete/auto-enable.
 
 Acceptance:
@@ -98,7 +98,7 @@ Acceptance:
 | Toolsets switch page | Implemented | `NbgToolsetsDoctorScreen` with persisted `toolsetOverrides`. |
 | Local session search | Improved | Drawer search already calls `searchSessions()`; rows now render match type, summary state, pinned state, and cleaned snippets. |
 | Session summary index | Implemented foundation | Local redacted `session-summary-index.json` sidecar is written with cached history; future UI can surface it beyond drawer snippets. |
-| Skill draft UI | Implemented foundation | Skills page exposes learned Skill draft review queue rules; real draft persistence/list remains next. |
+| Skill draft UI | Improved | Skills page now accepts and renders a learned Skill draft queue with pending/blocked/dangerous counts and row-level evidence status; real draft persistence/backend sync remains next. |
 | Skill Curator | Implemented foundation | Skills page shows governance counts and no-auto-delete policy; usage metrics/archive remain next. |
 | Agents Team subtask panel | Implemented foundation | Agents page shows bounded templates, budgets, allowed tools, cancellation, and consolidation requirements. |
 | Expert Review UI | Implemented foundation | URL API page shows read-only readiness based on verified models; actual multi-call run UI remains next. |
@@ -149,8 +149,18 @@ Skill draft / rollback boundary verification:
 
 Result: `BUILD SUCCESSFUL`.
 
+Learned Skill draft queue verification:
+
+```bash
+./gradlew --no-daemon :app:testDebugUnitTest --tests com.nbg.android.NbgLearnedSkillDraftPolicyTest --tests com.nbg.android.AndroidManifestBehaviorTest.androidExposesHanakoSkillsControls
+```
+
+Result: `BUILD SUCCESSFUL`.
+
 Full verification command:
 
 ```bash
 scripts/nbg_test.sh
 ```
+
+Result: `BUILD SUCCESSFUL`.

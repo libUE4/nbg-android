@@ -1346,6 +1346,7 @@ fun NbgAndroidShell(
       )
       NbgShellPage.Skills -> NbgSkillsScreen(
         snapshot = hanakoState.skillsSnapshot,
+        learnedDraftQueue = hanakoState.learnedSkillDraftQueue,
         loading = hanakoState.skillsLoading,
         error = hanakoState.skillsError,
         busyKey = hanakoState.skillsBusyKey,

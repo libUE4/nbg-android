@@ -1,5 +1,7 @@
 package com.nbg.android
 
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -85,5 +87,105 @@ class NbgLearnedSkillDraftPolicyTest {
     assertFalse(dangerousDraft.allowInstall)
     assertFalse(dangerousDraft.allowEnable)
     assertTrue(dangerousDraft.reason.contains("危险权限"))
+  }
+
+  @Test
+  fun learnedSkillDraftQueueKeepsGeneratedSkillsReviewOnly() {
+    val completion = NbgTaskCompletionEvidenceBundle(
+      contractId = "task-skill",
+      title = "复用构建流程",
+      criteria = listOf(nbgTaskCriterion(NbgTaskCompletionCriterionKind.BuildResult, "构建")),
+      evidence = listOf(
+        nbgTaskEvidence(
+          kind = NbgTaskCompletionCriterionKind.BuildResult,
+          state = NbgTaskCompletionEvidenceState.Passed,
+          label = "构建",
+          summary = "assembleDebug passed",
+        ),
+      ),
+    )
+    val pending = nbgLearnedSkillDraftQueueEntry(
+      id = "draft-1",
+      skillName = "android-build",
+      description = "Run Gradle verification before completion.",
+      targetPath = "/root/.hanako/skills/android-build/SKILL.md",
+      sourceTaskId = "task-skill",
+      sourceTaskTitle = "完成 Android 构建检查",
+      completionEvidence = completion,
+      draftSha256 = "c".repeat(64),
+      permissionTier = NbgPermissionRiskTier.High,
+      createdAtMs = 100L,
+      updatedAtMs = 200L,
+    )
+    val blocked = nbgLearnedSkillDraftQueueEntry(
+      id = "draft-2",
+      skillName = "unsafe-delete-helper",
+      targetPath = "relative/SKILL.md",
+      sourceTaskId = "",
+      completionEvidence = null,
+      draftSha256 = "bad",
+      permissionTier = NbgPermissionRiskTier.Dangerous,
+      createdAtMs = 300L,
+      updatedAtMs = 300L,
+    )
+
+    val queue = nbgBuildLearnedSkillDraftQueue(listOf(blocked, pending))
+
+    assertEquals(NBG_LEARNED_SKILL_DRAFT_QUEUE_VERSION, queue.modelVersion)
+    assertEquals(2, queue.visibleEntries.size)
+    assertEquals("android-build", queue.visibleEntries.first().skillName)
+    assertEquals(1, queue.pendingReviewCount)
+    assertEquals(1, queue.blockedCount)
+    assertEquals(1, queue.dangerousCount)
+    assertEquals(0, queue.installableCount)
+    assertEquals(0, queue.enableableCount)
+    assertEquals(NbgLearnedSkillDraftStatus.PendingReview, pending.status)
+    assertTrue(pending.review.allowDraft)
+    assertFalse(pending.review.allowInstall)
+    assertFalse(pending.review.allowEnable)
+    assertEquals(NbgLearnedSkillDraftStatus.BlockedMissingEvidence, blocked.status)
+    assertTrue(blocked.missingEvidence.contains("completion_evidence_complete"))
+    assertTrue(blocked.missingEvidence.contains("target_path_reviewed"))
+  }
+
+  @Test
+  fun parseLearnedSkillDraftQueueNormalizesUntrustedBackendDrafts() {
+    val completion = NbgTaskCompletionEvidenceBundle(
+      contractId = "task-json",
+      title = "JSON 草稿",
+      criteria = listOf(nbgTaskCriterion(NbgTaskCompletionCriterionKind.TestResult, "测试")),
+      evidence = listOf(
+        nbgTaskEvidence(
+          kind = NbgTaskCompletionCriterionKind.TestResult,
+          state = NbgTaskCompletionEvidenceState.Passed,
+          label = "测试",
+        ),
+      ),
+    )
+    val queue = parseNbgLearnedSkillDraftQueue(
+      JSONArray().put(
+        JSONObject()
+          .put("id", "json-draft")
+          .put("skillName", "json-skill")
+          .put("targetPath", "/root/.hanako/skills/json-skill/SKILL.md")
+          .put("sourceTaskId", "task-json")
+          .put("completionEvidence", completion.toJson())
+          .put("draftSha256", "d".repeat(64))
+          .put("permissionTier", "dangerous")
+          .put("status", "pending")
+          .put("createdAtMs", 10L)
+          .put("updatedAtMs", 20L),
+      ),
+    )
+
+    val draft = queue.visibleEntries.single()
+    assertEquals("json-draft", draft.id)
+    assertEquals(NbgLearnedSkillDraftStatus.PendingReview, draft.status)
+    assertEquals(NbgPermissionRiskTier.Dangerous, draft.review.permissionTier)
+    assertTrue(draft.review.allowDraft)
+    assertFalse(draft.review.allowInstall)
+    assertFalse(draft.review.allowEnable)
+    assertEquals(emptyList<String>(), draft.missingEvidence)
+    assertEquals(1, queue.dangerousCount)
   }
 }

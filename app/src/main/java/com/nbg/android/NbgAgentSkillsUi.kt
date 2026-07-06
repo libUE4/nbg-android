@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.sp
 @Composable
 internal fun NbgSkillsScreen(
   snapshot: HanakoSkillsSnapshot,
+  learnedDraftQueue: NbgLearnedSkillDraftQueue = NbgLearnedSkillDraftQueue(),
   loading: Boolean,
   error: String?,
   busyKey: String?,
@@ -108,7 +109,7 @@ internal fun NbgSkillsScreen(
         NbgSkillCuratorCard(summary = nbgBuildSkillCuratorSummary(snapshot))
       }
       item {
-        NbgLearnedSkillDraftQueueCard()
+        NbgLearnedSkillDraftQueueCard(queue = learnedDraftQueue)
       }
       item {
         NbgSkillBundlesCard(
@@ -252,7 +253,9 @@ internal fun NbgSkillsScreen(
 }
 
 @Composable
-private fun NbgLearnedSkillDraftQueueCard() {
+private fun NbgLearnedSkillDraftQueueCard(queue: NbgLearnedSkillDraftQueue) {
+  val visibleDrafts = queue.visibleEntries
+  val hasDrafts = visibleDrafts.isNotEmpty()
   Surface(
     modifier = Modifier.fillMaxWidth(),
     shape = RoundedCornerShape(16.dp),
@@ -267,7 +270,7 @@ private fun NbgLearnedSkillDraftQueueCard() {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
       ) {
-        NbgSkillsIconBox(icon = Icons.Filled.Save, active = false)
+        NbgSkillsIconBox(icon = Icons.Filled.Save, active = hasDrafts)
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
           Text(
             text = "Learned Skill drafts",
@@ -278,14 +281,25 @@ private fun NbgLearnedSkillDraftQueueCard() {
             overflow = TextOverflow.Ellipsis,
           )
           Text(
-            text = "当前没有待审查草稿",
-            color = NbgAgentColors.TextMuted,
+            text = if (hasDrafts) {
+              "${queue.pendingReviewCount} 待复核 · ${queue.blockedCount} 证据不足"
+            } else {
+              "当前没有待审查草稿"
+            },
+            color = if (queue.blockedCount > 0 || queue.dangerousCount > 0) {
+              NbgAgentColors.StatusRed
+            } else {
+              NbgAgentColors.TextMuted
+            },
             fontSize = 11.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
           )
         }
-        NbgSkillsStatusPill(text = "review-only", color = NbgAgentColors.TextMuted)
+        NbgSkillsStatusPill(
+          text = if (queue.dangerousCount > 0) "${queue.dangerousCount} dangerous" else "review-only",
+          color = if (queue.dangerousCount > 0) NbgAgentColors.StatusRed else NbgAgentColors.TextMuted,
+        )
       }
       Text(
         text = "生成 Skill 必须具备完成证据、来源任务、目标路径复核、SHA-256 和权限等级；v1 只允许保存为草稿，不能自动安装或启用。",
@@ -301,6 +315,104 @@ private fun NbgLearnedSkillDraftQueueCard() {
         maxLines = 2,
         overflow = TextOverflow.Ellipsis,
       )
+      if (hasDrafts) {
+        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+          visibleDrafts.take(3).forEach { draft ->
+            NbgLearnedSkillDraftRow(draft)
+          }
+        }
+        if (visibleDrafts.size > 3) {
+          Text(
+            text = "还有 ${visibleDrafts.size - 3} 个草稿",
+            color = NbgAgentColors.TextMuted,
+            fontSize = 10.5.sp,
+            lineHeight = 14.sp,
+          )
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun NbgLearnedSkillDraftRow(draft: NbgLearnedSkillDraftQueueEntry) {
+  val blocked = draft.status == NbgLearnedSkillDraftStatus.BlockedMissingEvidence || !draft.review.allowDraft
+  val dangerous = draft.review.permissionTier == NbgPermissionRiskTier.Dangerous
+  Surface(
+    modifier = Modifier.fillMaxWidth(),
+    shape = RoundedCornerShape(13.dp),
+    color = NbgAgentColors.SurfaceLow,
+    border = BorderStroke(
+      1.dp,
+      when {
+        blocked || dangerous -> NbgAgentColors.StatusRed
+        else -> NbgAgentColors.InputBorder
+      },
+    ),
+  ) {
+    Column(
+      modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+      verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+          Text(
+            text = draft.skillName,
+            color = NbgAgentColors.TextStrong,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+          Text(
+            text = listOf(
+              draft.status.label,
+              draft.review.permissionTier.label,
+              draft.review.sourceTaskId.takeIf { it.isNotBlank() }?.let { "task $it" },
+            ).filterNotNull().joinToString(" · "),
+            color = if (blocked || dangerous) NbgAgentColors.StatusRed else NbgAgentColors.TextMuted,
+            fontSize = 10.5.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
+        NbgSkillsStatusPill(
+          text = if (blocked) "blocked" else "draft",
+          color = if (blocked || dangerous) NbgAgentColors.StatusRed else NbgAgentColors.Primary,
+        )
+      }
+      val summary = draft.description.ifBlank { draft.sourceTaskTitle }.ifBlank { draft.review.reason }
+      Text(
+        text = summary,
+        color = NbgAgentColors.TextMuted,
+        fontSize = 11.sp,
+        lineHeight = 15.sp,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+      )
+      if (draft.missingEvidence.isNotEmpty()) {
+        Text(
+          text = "缺少：${draft.missingEvidence.joinToString(", ")}",
+          color = NbgAgentColors.StatusRed,
+          fontSize = 10.5.sp,
+          lineHeight = 14.sp,
+          maxLines = 2,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
+      if (draft.review.targetPathLabel.isNotBlank()) {
+        Text(
+          text = draft.review.targetPathLabel,
+          color = NbgAgentColors.CodeText,
+          fontSize = 10.sp,
+          fontFamily = FontFamily.Monospace,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
     }
   }
 }
