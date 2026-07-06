@@ -404,6 +404,7 @@ internal fun NbgToolStatusCard(
     tool.filePath.takeIf { it.isNotBlank() }?.substringAfterLast('/').orEmpty(),
     tool.detail.takeIf { !tool.hasInlinePreview }?.let(::nbgCompactToolDetail),
   ).filter { it.isNotBlank() }.distinct().joinToString(" / ")
+  val completionEvidence = tool.visibleTaskCompletionEvidence()
   if (compact) {
     NbgCompactTerminalToolCard(
       tool = tool,
@@ -497,6 +498,9 @@ internal fun NbgToolStatusCard(
           overflow = TextOverflow.Ellipsis,
         )
       }
+      completionEvidence?.let {
+        NbgTaskCompletionEvidenceStrip(evidence = it)
+      }
       if (tool.hasInlinePreview) {
         Row(
           modifier = Modifier.fillMaxWidth(),
@@ -554,6 +558,7 @@ internal fun NbgCompactTerminalToolCard(
   val outputText = tool.terminalOutput?.output?.ifBlank { null } ?: fallbackText
   val canShowOutput = outputText.isNotBlank()
   val summary = nbgToolPreviewSummary(tool)
+  val completionEvidence = tool.visibleTaskCompletionEvidence()
   val interruptTerminalId = tool.terminalOutput
     ?.takeIf { it.alive == true && !it.staticOutput && it.sessionId.isNotBlank() }
     ?.sessionId
@@ -630,6 +635,9 @@ internal fun NbgCompactTerminalToolCard(
             onClick = { onInterruptTerminal(interruptTerminalId) },
           )
         }
+      }
+      completionEvidence?.let {
+        NbgTaskCompletionEvidenceStrip(evidence = it, compact = true)
       }
       AnimatedVisibility(
         visible = expanded && canShowOutput,
@@ -734,6 +742,9 @@ internal fun NbgToolDetailsDialog(
             lineHeight = 17.sp,
           )
         }
+        tool.visibleTaskCompletionEvidence()?.let {
+          NbgTaskCompletionEvidenceDetails(evidence = it)
+        }
         NbgToolInlinePreviews(tool)
         if (tool.kind == "terminal" && tool.terminalOutput == null) {
           val fallback = nbgTerminalToolFallbackText(tool)
@@ -752,6 +763,102 @@ internal fun NbgToolDetailsDialog(
     },
   )
 }
+
+@Composable
+internal fun NbgTaskCompletionEvidenceStrip(
+  evidence: NbgTaskCompletionEvidenceBundle,
+  compact: Boolean = false,
+) {
+  val review = evidence.review
+  val color = nbgTaskCompletionEvidenceColor(review.state)
+  Row(
+    modifier = Modifier
+      .fillMaxWidth()
+      .background(color.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+      .padding(horizontal = 8.dp, vertical = if (compact) 5.dp else 6.dp)
+      .semantics { contentDescription = "完成证据 ${evidence.summaryLabel()}" },
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(7.dp),
+  ) {
+    Box(
+      modifier = Modifier
+        .size(if (compact) 6.dp else 7.dp)
+        .background(color, CircleShape),
+    )
+    Column(
+      modifier = Modifier.weight(1f),
+      verticalArrangement = Arrangement.spacedBy(1.dp),
+    ) {
+      Text(
+        text = evidence.summaryLabel(),
+        color = NbgAgentColors.TextStrong,
+        fontSize = if (compact) 10.sp else 11.sp,
+        lineHeight = if (compact) 13.sp else 15.sp,
+        fontWeight = FontWeight.Medium,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+      )
+      Text(
+        text = review.userMessage,
+        color = NbgAgentColors.ToolMutedText,
+        fontSize = if (compact) 9.sp else 10.sp,
+        lineHeight = if (compact) 12.sp else 13.sp,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+      )
+    }
+  }
+}
+
+@Composable
+internal fun NbgTaskCompletionEvidenceDetails(
+  evidence: NbgTaskCompletionEvidenceBundle,
+) {
+  val review = evidence.review
+  val color = nbgTaskCompletionEvidenceColor(review.state)
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .background(color.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+      .padding(horizontal = 9.dp, vertical = 8.dp),
+    verticalArrangement = Arrangement.spacedBy(5.dp),
+  ) {
+    Text(
+      text = evidence.title.ifBlank { "完成证据" },
+      color = NbgAgentColors.TextStrong,
+      fontSize = 12.sp,
+      lineHeight = 16.sp,
+      fontWeight = FontWeight.SemiBold,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+    )
+    Text(
+      text = "${evidence.summaryLabel()} / ${review.userMessage}",
+      color = NbgAgentColors.ToolMutedText,
+      fontSize = 11.sp,
+      lineHeight = 15.sp,
+    )
+    evidence.detailLines().forEach { line ->
+      Text(
+        text = line,
+        color = NbgAgentColors.ToolMutedText,
+        fontSize = 10.sp,
+        lineHeight = 14.sp,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+      )
+    }
+  }
+}
+
+private fun nbgTaskCompletionEvidenceColor(state: NbgTaskCompletionEvidenceState): Color =
+  when (state) {
+    NbgTaskCompletionEvidenceState.Passed,
+    NbgTaskCompletionEvidenceState.Present,
+    NbgTaskCompletionEvidenceState.Overridden -> NbgAgentColors.StatusGreen
+    NbgTaskCompletionEvidenceState.Missing -> NbgAgentColors.StatusYellow
+    NbgTaskCompletionEvidenceState.Failed -> NbgAgentColors.StatusRed
+  }
 
 @Composable
 internal fun NbgToolInlinePreviews(

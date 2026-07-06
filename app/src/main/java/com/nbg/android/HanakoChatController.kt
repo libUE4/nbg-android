@@ -450,6 +450,11 @@ class HanakoChatController(
   private fun createTeamTaskInternal(text: String, urlApiSelection: Pair<NbgStoredApi, NbgApiModel>? = null) {
     val prompt = text.trim()
     if (prompt.isEmpty()) return
+    val delegationReview = nbgReviewTeamDelegationRequest(prompt)
+    if (!delegationReview.allowStart) {
+      onEvent(HanakoChatEvent.SystemMessage(delegationReview.reason))
+      return
+    }
     onEvent(HanakoChatEvent.UserMessage(prompt))
     scope.launch {
       ensureConnected()
@@ -489,10 +494,10 @@ class HanakoChatController(
       val pendingTaskId = "android-team-${System.currentTimeMillis()}"
       val pendingTask = HanakoTeamTaskStatus(
         taskId = pendingTaskId,
-        title = nbgTeamTaskTitle(prompt),
+        title = delegationReview.title.ifBlank { nbgTeamTaskTitle(prompt) },
         mode = HANA_TEAM_SINGLE_AGENT_SESSION_MODE,
         status = "queued",
-        summary = "正在接入 HanakoPro 执行会话...",
+        summary = "${delegationReview.reason} 正在接入 HanakoPro 执行会话...",
         agents = nbgSingleAgentSessionAgent(pendingTaskId, "queued", "等待 HanakoPro 接管任务"),
       )
       _state.update {

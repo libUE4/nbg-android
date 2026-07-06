@@ -59,7 +59,7 @@ class NbgMemoryContextPolicyTest {
   }
 
   @Test
-  fun memoryExportPolicyRequiresUserTriggerSelectionAndScanButIsDisabledInV1() {
+  fun memoryExportPolicyRequiresUserTriggerSelectionAndScan() {
     val noEvidence = nbgReviewMemoryExportRequest(
       selectedItemCount = -4,
       explicitUserTrigger = false,
@@ -81,8 +81,67 @@ class NbgMemoryContextPolicyTest {
 
     assertEquals(listOf("explicit_user_trigger", "per_item_selection", "sensitive_scan_passed"), allFutureEvidence.presentEvidence)
     assertEquals(3, allFutureEvidence.selectedItemCount)
-    assertFalse("v1 must not export Memory content even when future evidence labels are present", allFutureEvidence.allowExport)
-    assertTrue(allFutureEvidence.reason.contains("does not expose Memory export"))
+    assertTrue("v1 allows redacted Memory export only when all evidence labels are present", allFutureEvidence.allowExport)
+    assertTrue(allFutureEvidence.reason.contains("Memory export allowed"))
+  }
+
+  @Test
+  fun redactedMemoryExportRequiresSelectionAndBlocksSensitiveItems() {
+    val safe = HanakoMemoryItem(
+      id = "memory-1",
+      type = "decision",
+      title = "Use local-first",
+      content = "Keep diagnostics local and user-triggered.",
+      tags = listOf(" release ", "beta"),
+      sourceSession = "/root/private/session.jsonl",
+      enabled = true,
+    )
+    val sensitive = safe.copy(
+      id = "memory-2",
+      content = "api_key=sk-live-secret-1234567890",
+    )
+    val disabled = safe.copy(
+      id = "memory-3",
+      content = "Disabled entries stay out of export.",
+      enabled = false,
+    )
+    val allowed = nbgBuildRedactedMemoryExport(
+      items = listOf(safe, disabled),
+      explicitUserTrigger = true,
+      perItemSelection = true,
+    )
+    val blockedSensitive = nbgBuildRedactedMemoryExport(
+      items = listOf(safe, sensitive),
+      explicitUserTrigger = true,
+      perItemSelection = true,
+    )
+    val blockedNoSelection = nbgBuildRedactedMemoryExport(
+      items = listOf(safe),
+      explicitUserTrigger = true,
+      perItemSelection = false,
+    )
+
+    assertTrue(allowed.review.allowExport)
+    assertEquals(1, allowed.items.size)
+    assertEquals(1, allowed.review.selectedItemCount)
+    assertEquals("decision", allowed.items.single().normalizedType)
+    assertEquals("Use local-first", allowed.items.single().title)
+    assertEquals("Keep diagnostics local and user-triggered.", allowed.items.single().content)
+    assertEquals(listOf("release", "beta"), allowed.items.single().tags)
+    assertFalse(allowed.items.single().idHash.contains("memory-1"))
+    assertFalse(allowed.items.single().sourceSessionHash.contains("/root/private"))
+    assertFalse(allowed.toJsonString().contains("memory-1"))
+    assertFalse(allowed.toJsonString().contains("/root/private"))
+    assertFalse(allowed.toJsonString().contains("Disabled entries stay out of export."))
+    assertTrue(allowed.toJsonString().contains("\"allowExport\": true"))
+
+    assertFalse(blockedSensitive.review.allowExport)
+    assertEquals(emptyList<NbgMemoryRedactedExportItem>(), blockedSensitive.items)
+    assertFalse(blockedSensitive.review.presentEvidence.contains("sensitive_scan_passed"))
+
+    assertFalse(blockedNoSelection.review.allowExport)
+    assertEquals(emptyList<NbgMemoryRedactedExportItem>(), blockedNoSelection.items)
+    assertFalse(blockedNoSelection.review.presentEvidence.contains("per_item_selection"))
   }
 
   @Test

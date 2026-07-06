@@ -1,6 +1,6 @@
 ---
 title: "Hermes reference adoption for NBG Android"
-status: draft
+status: implemented
 date: 2026-07-06
 type: plan
 target_repo: /root/nbg-android
@@ -460,6 +460,31 @@ Recovery:
 - If task evidence causes regressions, fall back to advisory evidence display without blocking send/chat.
 - If Skill or Memory review causes regressions, keep drafts local and disabled until repaired.
 - If delegation recovery is unreliable, disable background execution and keep single-agent chat behavior.
+
+## Implementation Record
+
+Implemented on 2026-07-06:
+
+- U1 task completion evidence: added `NbgTaskCompletionEvidence.kt`, cached JSON parsing, inferred evidence for diff/file/terminal/build/test/team status, and standardized evidence strips/details in `NbgAgentMessageUi.kt`.
+- U2 Learn-to-Skill safety gate: added `NbgLearnedSkillDraftPolicy.kt` so generated Skills can only become reviewed local drafts with completion evidence, source task id, reviewed target path, SHA-256 metadata, and permission tier; install/enable remain blocked in v1.
+- U3 Memory review/export: extended Memory UI with source metadata, edit/delete preservation, explicit per-item redacted export preview, hashed identifiers/source sessions, sensitive scan gating, and enabled-item-only export.
+- U4 Agents team delegation: added bounded templates and budgets in `NbgTeamDelegationPolicy.kt`, with `HanakoChatController.createTeamTaskInternal()` blocking unknown background requests before execution.
+- U5 expert review/MoA gate: added `NbgExpertReviewPolicy.kt` with default-off, explicit-user-trigger, two-model minimum, separate reference outputs, consolidation requirement, and no tool/file side effects.
+- R1 audit: app/build/gradle code has no Hermes runtime dependency; Hermes references remain documentation/research only.
+
+Verification run:
+
+```bash
+./gradlew --no-daemon :app:testDebugUnitTest :terminal-core:testDebugUnitTest :android-mcp-server:testDebugUnitTest :app:assembleDebug
+```
+
+Result: `BUILD SUCCESSFUL in 1m 2s` with 94 actionable tasks, 6 executed.
+
+Manual evidence still useful before release:
+
+- UI screenshots for task evidence cards and Memory export preview.
+- A device run of two bounded team templates, including cancellation/recovery behavior.
+- A user-triggered expert review UI flow when the later URL API surface is wired to `NbgExpertReviewPolicy`.
 
 ## Sources And Research
 

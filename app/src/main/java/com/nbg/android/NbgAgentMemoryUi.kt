@@ -17,9 +17,11 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -33,7 +35,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -56,9 +60,17 @@ internal fun NbgMemoryScreen(
   var editorItem by remember { mutableStateOf<HanakoMemoryItem?>(null) }
   var addOpen by remember { mutableStateOf(false) }
   var deleteTarget by remember { mutableStateOf<HanakoMemoryItem?>(null) }
+  var exportMode by remember { mutableStateOf(false) }
+  var exportSelectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+  var exportPreview by remember { mutableStateOf<NbgMemoryRedactedExport?>(null) }
 
   LaunchedEffect(query, type) {
     onReload(query, type)
+  }
+  LaunchedEffect(state.items) {
+    val visibleIds = state.items.map { it.id }.toSet()
+    exportSelectedIds = exportSelectedIds.intersect(visibleIds)
+    exportPreview = null
   }
 
   NbgShellSubPage(
@@ -86,7 +98,30 @@ internal fun NbgMemoryScreen(
           onTypeChange = { type = it },
           onReload = { onReload(query, type) },
           onAdd = { addOpen = true },
+          exportMode = exportMode,
+          exportSelectedCount = exportSelectedIds.size,
+          onToggleExportMode = {
+            exportMode = !exportMode
+            exportPreview = null
+            if (!exportMode) exportSelectedIds = emptySet()
+          },
+          onBuildExport = {
+            val selected = state.items.filter { it.id in exportSelectedIds }
+            exportPreview = nbgBuildRedactedMemoryExport(
+              items = selected,
+              explicitUserTrigger = true,
+              perItemSelection = selected.isNotEmpty(),
+            )
+          },
         )
+      }
+      exportPreview?.let { export ->
+        item {
+          NbgMemoryExportPreviewCard(
+            export = export,
+            onDismiss = { exportPreview = null },
+          )
+        }
       }
       if (state.items.isEmpty()) {
         item { NbgMemoryEmptyState() }
@@ -95,6 +130,16 @@ internal fun NbgMemoryScreen(
           NbgMemoryItemCard(
             item = item,
             busy = busyKey != null,
+            exportMode = exportMode,
+            exportSelected = item.id in exportSelectedIds,
+            onExportSelectedChange = { selected ->
+              exportPreview = null
+              exportSelectedIds = if (selected) {
+                exportSelectedIds + item.id
+              } else {
+                exportSelectedIds - item.id
+              }
+            },
             onEdit = { editorItem = item },
             onDelete = { deleteTarget = item },
           )
@@ -159,6 +204,10 @@ private fun NbgMemorySummaryCard(
   onTypeChange: (String) -> Unit,
   onReload: () -> Unit,
   onAdd: () -> Unit,
+  exportMode: Boolean,
+  exportSelectedCount: Int,
+  onToggleExportMode: () -> Unit,
+  onBuildExport: () -> Unit,
 ) {
   Surface(
     modifier = Modifier.fillMaxWidth(),
@@ -170,7 +219,7 @@ private fun NbgMemorySummaryCard(
       modifier = Modifier.padding(14.dp),
       verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         Button(enabled = !busy, onClick = onAdd) {
           Icon(Icons.Filled.Add, contentDescription = null)
           Text("添加")
@@ -178,9 +227,21 @@ private fun NbgMemorySummaryCard(
         IconButton(enabled = !busy && !loading, onClick = onReload) {
           Icon(Icons.Filled.Refresh, contentDescription = "刷新")
         }
+        Button(enabled = !busy && state.items.any { it.enabled }, onClick = onToggleExportMode) {
+          Icon(Icons.Filled.Share, contentDescription = null)
+          Text(if (exportMode) "取消导出" else "导出")
+        }
+        if (exportMode) {
+          Button(enabled = !busy && exportSelectedCount > 0, onClick = onBuildExport) {
+            Text("生成预览")
+          }
+        }
       }
       Text(
-        text = "${state.enabledCount} 启用 · ${state.count} 总数",
+        text = buildString {
+          append("${state.enabledCount} 启用 · ${state.count} 总数")
+          if (exportMode) append(" · 已选 $exportSelectedCount")
+        },
         color = NbgAgentColors.TextMuted,
         fontSize = 12.sp,
       )
@@ -203,6 +264,9 @@ private fun NbgMemorySummaryCard(
 private fun NbgMemoryItemCard(
   item: HanakoMemoryItem,
   busy: Boolean,
+  exportMode: Boolean,
+  exportSelected: Boolean,
+  onExportSelectedChange: (Boolean) -> Unit,
   onEdit: () -> Unit,
   onDelete: () -> Unit,
 ) {
@@ -216,7 +280,14 @@ private fun NbgMemoryItemCard(
       modifier = Modifier.padding(13.dp),
       verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (exportMode) {
+          Checkbox(
+            checked = exportSelected,
+            enabled = !busy && item.enabled,
+            onCheckedChange = { selected -> onExportSelectedChange(selected) },
+          )
+        }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
           Text(
             text = item.displayTitle,
@@ -231,6 +302,13 @@ private fun NbgMemoryItemCard(
             text = nbgMemoryTypeLabel(item.type),
             color = NbgAgentColors.TextMuted,
             fontSize = 11.sp,
+          )
+          Text(
+            text = nbgMemoryMetadataLine(item),
+            color = NbgAgentColors.ToolMutedText,
+            fontSize = 10.5.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
           )
         }
         IconButton(enabled = !busy, onClick = onEdit) {
@@ -257,6 +335,55 @@ private fun NbgMemoryItemCard(
           overflow = TextOverflow.Ellipsis,
         )
       }
+    }
+  }
+}
+
+@Composable
+private fun NbgMemoryExportPreviewCard(
+  export: NbgMemoryRedactedExport,
+  onDismiss: () -> Unit,
+) {
+  Surface(
+    modifier = Modifier.fillMaxWidth(),
+    shape = RoundedCornerShape(14.dp),
+    color = if (export.review.allowExport) NbgAgentColors.SurfaceContainer else NbgAgentColors.SurfaceLow,
+    border = BorderStroke(
+      1.dp,
+      if (export.review.allowExport) NbgAgentColors.PrimarySoft else NbgAgentColors.StatusYellow,
+    ),
+  ) {
+    Column(
+      modifier = Modifier.padding(13.dp),
+      verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+          Text(
+            text = if (export.review.allowExport) "脱敏导出预览" else "导出已阻止",
+            color = NbgAgentColors.TextStrong,
+            fontSize = 13.sp,
+            lineHeight = 17.sp,
+            fontWeight = FontWeight.SemiBold,
+          )
+          Text(
+            text = export.review.reason,
+            color = NbgAgentColors.TextMuted,
+            fontSize = 11.sp,
+            lineHeight = 15.sp,
+          )
+        }
+        TextButton(onClick = onDismiss) { Text("关闭") }
+      }
+      Text(
+        text = export.toJsonString(),
+        color = NbgAgentColors.TextStrong,
+        fontFamily = FontFamily.Monospace,
+        fontSize = 10.sp,
+        lineHeight = 14.sp,
+        maxLines = 12,
+        overflow = TextOverflow.Ellipsis,
+      )
     }
   }
 }
@@ -371,3 +498,25 @@ private fun NbgMemoryEmptyState() {
 
 private fun nbgMemorySubtitle(state: HanakoMemoryState, loading: Boolean): String =
   if (loading) "正在读取本地记忆" else "${state.enabledCount} 启用 · ${state.count} 总数"
+
+private fun nbgMemoryMetadataLine(item: HanakoMemoryItem): String {
+  val source = if (item.sourceSession.isNotBlank()) {
+    "来源 ${item.sourceSession.nbgMemoryMetadataValue()}"
+  } else {
+    "来源 未记录"
+  }
+  val turn = item.sourceTurnId.takeIf { it.isNotBlank() }?.let { "Turn ${it.nbgMemoryMetadataValue(max = 18)}" }
+  val updated = item.updatedAt.ifBlank { item.createdAt }
+    .takeIf { it.isNotBlank() }
+    ?.let { "更新 ${it.nbgMemoryMetadataValue(max = 24)}" }
+  val disabled = if (item.enabled) null else "已停用"
+  return listOfNotNull(source, turn, updated, disabled).joinToString(" · ")
+}
+
+private fun String.nbgMemoryMetadataValue(max: Int = 28): String =
+  trim()
+    .replace(Regex("""(?i)(token|api[_-]?key|password|secret)=([^&\s]+)"""), "$1=[redacted]")
+    .replace(Regex("""\s+"""), " ")
+    .substringAfterLast('/')
+    .substringAfterLast('\\')
+    .take(max)

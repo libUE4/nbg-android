@@ -4379,9 +4379,11 @@ class AndroidManifestBehaviorTest {
     val launcher = File("src/main/java/com/nbg/android/HanakoServerLauncher.kt").readText()
     val controller = File("src/main/java/com/nbg/android/HanakoChatController.kt").readText()
     val skillsUi = File("src/main/java/com/nbg/android/NbgAgentSkillsUi.kt").readText()
+    val learnedDraftPolicy = File("src/main/java/com/nbg/android/NbgLearnedSkillDraftPolicy.kt").readText()
     val apiClient = File("src/main/java/com/nbg/android/HanakoApiClient.kt").readText()
     val diagnostics = File("src/main/java/com/nbg/android/NbgDiagnosticsExport.kt").readText()
     val skillIntegrityTest = File("src/test/java/com/nbg/android/NbgSkillSourceIntegrityTest.kt").readText()
+    val learnedDraftTest = File("src/test/java/com/nbg/android/NbgLearnedSkillDraftPolicyTest.kt").readText()
     val releaseGate = File("../scripts/nbg_release_gate.sh").readText()
 
     listOf(
@@ -4401,6 +4403,15 @@ class AndroidManifestBehaviorTest {
       "Trusted External Promotion",
       "signed_bundle",
       "pinned_sha256_allowlist",
+      "Learned Skill draft review",
+      "nbg-learned-skill-draft-v1",
+      "completion_evidence_complete",
+      "source_task",
+      "target_path_reviewed",
+      "draft_sha256",
+      "permission_tier_recorded",
+      "allowInstall=false",
+      "allowEnable=false",
       "None for v1",
       "safe presence marker",
       "skills2set",
@@ -4458,11 +4469,25 @@ class AndroidManifestBehaviorTest {
     assertTrue(skillsUi.contains("reviewedSource == trimmedPath"))
     assertTrue(skillsUi.contains("NbgSkillEnableReviewDialog"))
     assertTrue(skillsUi.contains("enabled && nbgSkillSummarySourceReview(skill).requiresReview"))
+    listOf(
+      "NBG_LEARNED_SKILL_DRAFT_POLICY_VERSION",
+      "NBG_LEARNED_SKILL_DRAFT_REQUIRED_EVIDENCE",
+      "NbgLearnedSkillDraftReview",
+      "nbgReviewLearnedSkillDraft",
+      "completionEvidence?.review",
+      "allowInstall = false",
+      "allowEnable = false",
+      "permissionTier == NbgPermissionRiskTier.Dangerous",
+    ).forEach {
+      assertTrue(learnedDraftPolicy.contains(it))
+    }
     assertTrue(apiClient.contains("verifiedBundledSkillNames: List<String>"))
     assertTrue(apiClient.contains("nbgMergeTrustedBundledSkillEnablement(snapshot.visibleSkills, verifiedBundledSkillNames)"))
     assertTrue(skillIntegrityTest.contains("manualInstallEnablementDropsNewReviewRequiredSkills"))
     assertTrue(skillIntegrityTest.contains("manualInstallEnablementDropsSameNameReviewRequiredReplacement"))
     assertTrue(skillIntegrityTest.contains("externalSkillPromotionRequiresSignedBundleAndPinnedSha256ButStaysUntrustedInV1"))
+    assertTrue(learnedDraftTest.contains("learnedSkillDraftRequiresCompletionTargetSourceHashAndPermissionEvidence"))
+    assertTrue(learnedDraftTest.contains("learnedSkillDraftBlocksMissingEvidenceAndKeepsDangerousDraftReviewOnly"))
     assertFalse(contract.contains("Whether manual Skills page installation should require an explicit review dialog before enabling"))
     assertFalse(contract.contains("Whether trusted external Skills should use signed bundles, pinned SHA-256 allowlists, or both."))
 
@@ -4651,8 +4676,9 @@ class AndroidManifestBehaviorTest {
       "explicit_user_trigger",
       "per_item_selection",
       "sensitive_scan_passed",
-      "Memory export is not available in this public beta",
-      "None for Memory export in v1",
+      "Public-beta v1 allows a redacted Memory export only when all three evidence labels are present",
+      "nbgBuildRedactedMemoryExport()",
+      "Memory export uses a separate explicit user-triggered path",
       "NBG_MEMORY_UPSTREAM_POLICY_ADOPTION_VERSION",
       "upstream_policy_version_match",
       "android_patch_marker_match",
@@ -4688,9 +4714,13 @@ class AndroidManifestBehaviorTest {
       "NBG_MEMORY_MAX_CONTENT_CHARS = 4_000",
       "NbgMemoryContextReview",
       "NbgMemoryExportPolicyReview",
+      "NbgMemoryRedactedExportItem",
+      "NbgMemoryRedactedExport",
       "NbgMemoryUpstreamPolicyAdoptionReview",
       "NbgMemoryContextRisk",
       "nbgReviewMemoryExportRequest",
+      "nbgBuildRedactedMemoryExport",
+      "toJsonString",
       "nbgReviewMemoryUpstreamPolicyAdoption",
       "nbgReviewMemoryInput",
       "nbgReviewMemoryItem",
@@ -4701,8 +4731,13 @@ class AndroidManifestBehaviorTest {
     ).forEach {
       assertTrue(policy.contains(it))
     }
+    val memoryUi = File("src/main/java/com/nbg/android/NbgAgentMemoryUi.kt").readText()
+    assertTrue(memoryUi.contains("nbgBuildRedactedMemoryExport"))
+    assertTrue(memoryUi.contains("NbgMemoryExportPreviewCard"))
+    assertTrue(memoryUi.contains("nbgMemoryMetadataLine"))
     val memoryPolicyTest = File("src/test/java/com/nbg/android/NbgMemoryContextPolicyTest.kt").readText()
-    assertTrue(memoryPolicyTest.contains("memoryExportPolicyRequiresUserTriggerSelectionAndScanButIsDisabledInV1"))
+    assertTrue(memoryPolicyTest.contains("memoryExportPolicyRequiresUserTriggerSelectionAndScan"))
+    assertTrue(memoryPolicyTest.contains("redactedMemoryExportRequiresSelectionAndBlocksSensitiveItems"))
     assertTrue(memoryPolicyTest.contains("memoryUpstreamPolicyAdoptionKeepsAndroidPatchGateInV1"))
 
     assertTrue(controller.contains("val review = nbgReviewMemoryInput(input)"))
@@ -5635,6 +5670,63 @@ class AndroidManifestBehaviorTest {
     assertTrue(moduleTest.contains("androidMcpServerContractIsDocumentedAndWired"))
     assertTrue(manifest.contains("android:name=\".McpServerService\""))
     assertTrue(manifest.contains("android:exported=\"false\""))
+  }
+
+  @Test
+  fun taskCompletionEvidenceContractIsDocumentedAndWired() {
+    val contract = File("../docs/contracts/task-completion-evidence-contract.md").readText()
+    val index = File("../docs/contracts/README.md").readText()
+    val evidence = File("src/main/java/com/nbg/android/NbgTaskCompletionEvidence.kt").readText()
+    val bridge = File("src/main/java/com/nbg/android/HanakoBridge.kt").readText()
+    val messageUi = File("src/main/java/com/nbg/android/NbgAgentMessageUi.kt").readText()
+    val evidenceTest = File("src/test/java/com/nbg/android/NbgTaskCompletionEvidenceTest.kt").readText()
+
+    listOf(
+      "Task Completion Evidence Contract",
+      "nbg-task-completion-evidence-v1",
+      "diff",
+      "file_write",
+      "command_exit",
+      "test_result",
+      "build_result",
+      "consolidated_result",
+      "User override",
+      "Tool statuses may infer evidence",
+      "NbgAgentMessageUi",
+      "completion evidence strip",
+      "NbgTaskCompletionEvidenceTest",
+    ).forEach {
+      assertTrue(contract.contains(it))
+    }
+    assertTrue(index.contains("task-completion-evidence-contract"))
+    assertTrue(index.contains("P0 active"))
+    assertTrue(index.contains("NbgTaskCompletionEvidence.kt"))
+
+    listOf(
+      "NBG_TASK_COMPLETION_EVIDENCE_VERSION",
+      "NbgTaskCompletionCriterionKind",
+      "NbgTaskCompletionEvidenceState",
+      "NbgTaskCompletionEvidenceBundle",
+      "NbgTaskCompletionEvidenceReview",
+      "nbgReviewTaskCompletionEvidence",
+      "withInferredTaskCompletionEvidence",
+      "visibleTaskCompletionEvidence",
+      "nbgInferTaskCompletionEvidence",
+      "parseNbgTaskCompletionEvidenceBundle",
+      "nbgTaskEvidenceArtifactRef",
+    ).forEach {
+      assertTrue(evidence.contains(it))
+    }
+    assertTrue(bridge.contains("taskCompletionEvidence: NbgTaskCompletionEvidenceBundle? = null"))
+    assertTrue(bridge.contains("(taskCompletionEvidence ?: nbgInferTaskCompletionEvidence(this@toJson))"))
+    assertTrue(bridge.contains("parseNbgTaskCompletionEvidenceBundle"))
+    assertTrue(messageUi.contains("NbgTaskCompletionEvidenceStrip"))
+    assertTrue(messageUi.contains("NbgTaskCompletionEvidenceDetails"))
+    assertTrue(messageUi.contains("visibleTaskCompletionEvidence"))
+    assertTrue(evidenceTest.contains("reviewRequiresEvidenceBeforeCompletionUnlessUserOverrides"))
+    assertTrue(evidenceTest.contains("failedEvidenceBlocksCompletionEvenWhenPresent"))
+    assertTrue(evidenceTest.contains("infersBuildTestDiffFileAndTeamEvidenceFromToolStatus"))
+    assertTrue(evidenceTest.contains("cachedToolStatusRoundTripsTaskCompletionEvidence"))
   }
 
   @Test

@@ -143,6 +143,38 @@ internal fun HanakoToolStatus.withInferredTaskCompletionEvidence(): HanakoToolSt
     copy(taskCompletionEvidence = nbgInferTaskCompletionEvidence(this))
   }
 
+internal fun HanakoToolStatus.visibleTaskCompletionEvidence(): NbgTaskCompletionEvidenceBundle? =
+  taskCompletionEvidence ?: nbgInferTaskCompletionEvidence(this)
+
+internal fun NbgTaskCompletionEvidenceBundle.summaryLabel(): String {
+  val evidenceReview = review
+  return when (evidenceReview.state) {
+    NbgTaskCompletionEvidenceState.Passed -> "完成证据 ${evidenceReview.satisfiedCount}/${evidenceReview.requiredCount}"
+    NbgTaskCompletionEvidenceState.Present -> "已记录完成证据"
+    NbgTaskCompletionEvidenceState.Missing -> "缺少证据 ${evidenceReview.satisfiedCount}/${evidenceReview.requiredCount}"
+    NbgTaskCompletionEvidenceState.Failed -> "证据失败"
+    NbgTaskCompletionEvidenceState.Overridden -> "用户覆盖完成"
+  }
+}
+
+internal fun NbgTaskCompletionEvidenceBundle.detailLines(limit: Int = 6): List<String> {
+  val evidenceReview = review
+  val evidenceLines = evidence.map { item ->
+    val parts = listOf(
+      item.label.ifBlank { item.kind.label },
+      item.state.label,
+      item.summary,
+    ).filter { it.isNotBlank() }
+    parts.joinToString(" / ")
+  }
+  val missingLines = evidenceReview.missingLabels.map { "缺少：$it" }
+  val failedLines = evidenceReview.failedLabels.map { "失败：$it" }
+  val override = overrideReason.takeIf { it.isNotBlank() }?.let { listOf("覆盖：${it.nbgTaskEvidenceCompact(limit = 160)}") }.orEmpty()
+  return (override + failedLines + missingLines + evidenceLines)
+    .distinct()
+    .take(limit)
+}
+
 internal fun nbgInferTaskCompletionEvidence(tool: HanakoToolStatus): NbgTaskCompletionEvidenceBundle? {
   tool.fileDiff?.let { diff ->
     return NbgTaskCompletionEvidenceBundle(

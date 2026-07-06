@@ -39,6 +39,7 @@ This contract prevents three P0 failures:
 | Android Skills UI | Collects user intent for install, enable, delete, bundle, and external path edits. | `NbgAgentSkillsUi.kt` |
 | Chat controller | Validates Android-side source policy and calls Hanako Skills APIs. | `HanakoChatController.kt`, `HanakoSkillInstallSupport.kt` |
 | Source integrity model | Classifies source kind, trust tier, install policy, bundled Skill hash pins, and provenance. | `NbgSkillSourceIntegrity.kt`, `HanakoSkillsModels.kt` |
+| Learned Skill draft policy | Gates Agent-generated Skill drafts behind task evidence, source task id, target review, SHA-256 metadata, and permission tier. | `NbgLearnedSkillDraftPolicy.kt` |
 | Hanako API client | Reads Skills state and updates enabled Skill names. | `HanakoApiClient.kt` |
 | Runtime seeding | Copies bundled default Skills into Hanako home and configures default enabled Skills. | `HanakoServerLauncher.kt`, `app/src/main/assets/nbg-default-skills` |
 | Diagnostics export | Reports only redacted aggregate integrity counts. | `NbgDiagnosticsExport.kt` |
@@ -105,6 +106,35 @@ Required future evidence for trusted external Skill promotion:
 - `pinned_sha256_allowlist`
 
 Public-beta v1 has no `trusted_external` tier and no external Skill promotion path. A future promotion path must require both evidence classes; a downloaded file hash, provenance record, host allowlist, or Skill name match alone is not sufficient.
+
+Learned Skill draft review:
+
+```kotlin
+const val NBG_LEARNED_SKILL_DRAFT_POLICY_VERSION = "nbg-learned-skill-draft-v1"
+
+data class NbgLearnedSkillDraftReview(
+  val allowDraft: Boolean,
+  val allowInstall: Boolean,
+  val allowEnable: Boolean,
+  val requiresReview: Boolean,
+  val requiredEvidence: List<String>,
+  val presentEvidence: List<String>,
+  val permissionTier: NbgPermissionRiskTier,
+  val sourceTaskId: String,
+  val targetPathLabel: String,
+  val reason: String,
+)
+```
+
+Required evidence for Agent-generated Skill drafts:
+
+- `completion_evidence_complete`
+- `source_task`
+- `target_path_reviewed`
+- `draft_sha256`
+- `permission_tier_recorded`
+
+Public-beta v1 may save a learned Skill only as a local draft when all required evidence is present. `allowInstall=false` and `allowEnable=false` are mandatory until a user review/install flow explicitly accepts the draft. Dangerous permission tiers must remain review-only and require strong confirmation before any future install path.
 
 Allowed `sourceKind` values:
 
@@ -274,6 +304,7 @@ Deprecation:
 - Error redaction: Skills diagnostics error text is exported only as a safe presence marker, not as raw server error text, because Skills errors may contain names, hashes, URLs, or paths.
 - Confirmation requirements: installing, updating, enabling, deleting, or editing external Skills is high risk and must remain confirmation-gated when performed by Agent tools.
 - Manual UI requirements: manual install of any path or URL must show source review before install, and manual enablement of review-required Skills must show a confirmation dialog.
+- Learned Skill requirements: Agent-generated Skills must pass `nbgReviewLearnedSkillDraft()` before being persisted as drafts; generated Skills must not be installed, enabled, or promoted to trusted defaults by the completion task itself.
 - Hash/signature requirements: bundled Skill assets require Android source-pinned size/SHA-256 and release-gate checksum evidence. Remote/user/external Skills remain unverified in public-beta v1. A future trusted-external promotion path must require both signed bundle evidence and pinned SHA-256 allowlist evidence.
 - Network/egress requirements: Android may download only user-provided URLs. No automatic Skill marketplace sync is allowed under this contract.
 - Audit/logging requirements: do not log full Skill content, full URL, query string, or local path in diagnostics or release notes.
@@ -292,6 +323,8 @@ Unit tests:
 - `NbgSkillSourceIntegrityTest.manualInstallEnablementDropsNewReviewRequiredSkills`
 - `NbgSkillSourceIntegrityTest.manualInstallEnablementDropsSameNameReviewRequiredReplacement`
 - `NbgSkillSourceIntegrityTest.provenanceRecordsDownloadedFileHashWithoutRawSourceUrl`
+- `NbgLearnedSkillDraftPolicyTest.learnedSkillDraftRequiresCompletionTargetSourceHashAndPermissionEvidence`
+- `NbgLearnedSkillDraftPolicyTest.learnedSkillDraftBlocksMissingEvidenceAndKeepsDangerousDraftReviewOnly`
 - `NbgDiagnosticsExportTest.diagnosticsExportIncludesStateCountsAndCapabilityHealth`
 - `AndroidManifestBehaviorTest.skillSourceIntegrityContractIsDocumentedAndWired`
 

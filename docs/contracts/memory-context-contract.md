@@ -45,7 +45,7 @@ This contract prevents:
 | Hanako Memory plugin | Runtime store and `memory:context` injection source. | bundled `plugins/memory` |
 | Runtime patch gate | Android-specific backend Memory policy patch for the bundled/source Hanako runtime. | `HanakoServerLauncher.kt` |
 | Diagnostics export | Redacted aggregate counts only. | `NbgDiagnosticsExport.kt` |
-| Memory export policy | v1 export gate and future evidence requirements. | `NbgMemoryContextPolicy.kt` |
+| Memory export policy | Explicit user-triggered redacted export gate. | `NbgMemoryContextPolicy.kt` |
 
 ## Trust Boundary
 
@@ -139,7 +139,7 @@ data class NbgMemoryExportPolicyReview(
 )
 ```
 
-Public-beta v1 does not expose a separate Memory export feature. Future Memory export requires all three evidence labels: explicit user trigger, per-item selection, and a passing sensitive-content scan. Even when all future evidence labels are present, Android v1 must return `allowExport=false`.
+Public-beta v1 allows a redacted Memory export only when all three evidence labels are present: explicit user trigger, per-item selection, and a passing sensitive-content scan. Export payloads must use hashed identifiers, bounded content, and redaction; diagnostics export remains aggregate-only and is not a Memory export feature.
 
 Upstream policy adoption gate:
 
@@ -172,8 +172,9 @@ Public-beta v1 keeps the Android Memory runtime patch gate. Future upstream adop
 | `SavedEnabled` | Memory is stored and enabled for future context. | `Edited`, `Disabled`, `Deleted` | No |
 | `SavedDisabled` | Memory is stored but not eligible for context injection. | `Enabled`, `Edited`, `Deleted` | No |
 | `Edited` | Existing Memory is changed through user-triggered edit. | `ReviewPending`, `SavedEnabled`, `SavedDisabled` | No |
-| `ExportRequested` | A future UI requests Memory export. | `ExportBlocked` in v1; future policy review only. | No |
-| `ExportBlocked` | Public-beta v1 blocks Memory export or future evidence is incomplete. | None in v1. | Yes |
+| `ExportRequested` | User explicitly requests Memory export for selected items. | `ExportAllowed`, `ExportBlocked` | No |
+| `ExportAllowed` | User trigger, per-item selection, and sensitive scan evidence are all present. | None | Yes |
+| `ExportBlocked` | Required evidence is incomplete or any selected item fails sensitive scan. | User revises selection and returns to `ExportRequested`. | No |
 | `UpstreamPolicyCandidate` | A future bundled Hanako Memory plugin claims native policy support. | `PatchGateRetained` in v1; future Security/QA review only. | No |
 | `PatchGateRetained` | Android keeps runtime patch enforcement despite future upstream evidence labels. | Normal Memory load/save/update/delete flows. | No |
 | `Deleted` | User confirms deletion. | None | Yes |
@@ -229,8 +230,9 @@ Public-beta v1 keeps the Android Memory runtime patch gate. Future upstream adop
 
 - Endpoint/UI: none in public-beta v1.
 - Policy:
-  - `nbgReviewMemoryExportRequest()` always returns `allowExport=false` in v1.
-  - Future export requires explicit user trigger, per-item selection, and a passing sensitive-content scan.
+  - `nbgReviewMemoryExportRequest()` returns `allowExport=true` only when at least one item is selected and explicit user trigger, per-item selection, and sensitive scan evidence are present.
+  - `nbgBuildRedactedMemoryExport()` returns no items when policy blocks export.
+  - Allowed export must use hashed ids/source sessions and bounded redacted text.
   - Diagnostics export is not a Memory export feature and must continue excluding Memory content.
 - Retry behavior: not applicable in v1.
 
@@ -243,7 +245,7 @@ Public-beta v1 keeps the Android Memory runtime patch gate. Future upstream adop
 | `blocked_too_large` | Content exceeds local policy size. | Memory content is too long. | Split into smaller durable facts. |
 | `plugin_missing` | Hanako Memory endpoint is unavailable. | Current HanakoPro has no Memory plugin API. | Restart or use a runtime with Memory plugin. |
 | `network_local_failure` | Local Hanako API is reconnecting. | HanakoPro is reconnecting; retry later. | Retry after reconnect. |
-| `memory_export_disabled_v1` | Memory export was requested but v1 has no export feature. | Memory export is not available in this public beta. | Use normal UI read/edit/delete controls; revisit when a separate export plan exists. |
+| `memory_export_blocked` | Memory export was requested without required evidence or with sensitive selected items. | Memory export needs explicit selection and a passing sensitive scan. | Adjust selection or remove sensitive content before retry. |
 | `memory_upstream_adoption_blocked_v1` | A future upstream Memory policy exists but Android must keep its patch gate in v1. | Android Memory policy patch remains active for this beta. | Revisit after parity evidence and Security/QA review. |
 
 ## Compatibility
@@ -271,17 +273,17 @@ Deprecation:
 
 - Silent Memory writes are outside this contract.
 - Exporting Memory item content through diagnostics is prohibited.
-- Separate Memory export is disabled in v1.
+- Separate Memory export is gated in v1 and emits only redacted selected-item payloads.
 
 ## Security Rules
 
 - Sensitive fields: Memory title, content, tags, source session path, source turn id, search query, raw item id if it can encode private data.
-- Redaction rules: diagnostics exports only aggregate counts, policy version, bounded audit metadata, and fixed Memory error-presence summary, never Memory text, title, tags, source session, turn id, item id, raw API error text, query, or backend echo.
+- Redaction rules: diagnostics exports only aggregate counts, policy version, bounded audit metadata, and fixed Memory error-presence summary, never Memory text, title, tags, source session, turn id, item id, raw API error text, query, or backend echo. Memory export uses a separate explicit user-triggered path with hashed identifiers, bounded content, and sensitive scan gating.
 - Local audit rules: audit events may store only action (`create`, `update`, `delete`), result (`success`, `failure`, `blocked`), normalized Memory type, policy risk, policy version, and timestamp. Audit events must not store Memory content, title, tags, item id, source session, source turn id, search query, raw error text, or hashes of private content.
 - Confirmation requirements: Memory writes require explicit user confirmation. Agent Memory save/update/delete remains high risk.
-- Hash/signature requirements: do not export hashes of private Memory content unless a separate support/privacy plan defines a need.
+- Hash/signature requirements: export may include hashes of ids/source sessions only; do not export hashes of private Memory content.
 - Network/egress requirements: Memory is local-first. No cloud sync or telemetry is allowed under this contract.
-- Export requirements: public-beta v1 has no Memory export feature. Future export must be user-triggered, per-item selected, pass sensitive scan, and undergo Security Agent review before any Memory content leaves normal UI state.
+- Export requirements: public-beta v1 Memory export must be user-triggered, per-item selected, pass sensitive scan, redacted, and covered by Security Agent review.
 - Audit/logging requirements: do not log raw Memory content, title, tags, or search query.
 
 ## Test Oracle
@@ -291,7 +293,8 @@ Unit tests:
 - `NbgMemoryContextPolicyTest.reviewAllowsKnownMemoryTypesAndNormalizesUnknownType`
 - `NbgMemoryContextPolicyTest.reviewBlocksSecretsTokensPasswordsAndPrivateKeys`
 - `NbgMemoryContextPolicyTest.reviewBlocksEmptyAndTooLargeContent`
-- `NbgMemoryContextPolicyTest.memoryExportPolicyRequiresUserTriggerSelectionAndScanButIsDisabledInV1`
+- `NbgMemoryContextPolicyTest.memoryExportPolicyRequiresUserTriggerSelectionAndScan`
+- `NbgMemoryContextPolicyTest.redactedMemoryExportRequiresSelectionAndBlocksSensitiveItems`
 - `NbgMemoryContextPolicyTest.memoryUpstreamPolicyAdoptionKeepsAndroidPatchGateInV1`
 - `NbgMemoryContextPolicyTest.memoryAuditEventsKeepOnlyMetadataAndStayBounded`
 - `NbgDiagnosticsExportTest.diagnosticsExportIncludesStateCountsAndCapabilityHealth`
@@ -347,5 +350,5 @@ Diagnostics must not include:
 
 ## Open Questions
 
-- None for Memory export in v1. Public-beta v1 does not expose Memory export; future export requires explicit user trigger, per-item selection, and sensitive scan approval.
+- Memory export remains local and user-triggered in v1; UI/export callers must pass explicit user trigger, per-item selection, and sensitive scan approval before generating a redacted payload.
 - None for upstream Memory policy adoption in v1. Public-beta v1 keeps the Android runtime patch gate; future upstream adoption requires policy version parity, Android patch marker compatibility, parity tests, and Security/QA review before patch removal is considered.

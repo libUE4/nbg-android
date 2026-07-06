@@ -1,5 +1,9 @@
 package com.nbg.android
 
+import org.json.JSONArray
+import org.json.JSONObject
+import java.security.MessageDigest
+
 internal const val NBG_MEMORY_CONTEXT_POLICY_VERSION = "nbg-memory-context-v1"
 internal const val NBG_MEMORY_EXPORT_POLICY_VERSION = "nbg-memory-export-v1"
 internal const val NBG_MEMORY_UPSTREAM_POLICY_ADOPTION_VERSION = "nbg-memory-upstream-policy-adoption-v1"
@@ -37,6 +41,22 @@ internal data class NbgMemoryExportPolicyReview(
   val reason: String,
 )
 
+internal data class NbgMemoryRedactedExportItem(
+  val idHash: String,
+  val normalizedType: String,
+  val title: String,
+  val content: String,
+  val tags: List<String>,
+  val sourceSessionHash: String,
+  val enabled: Boolean,
+)
+
+internal data class NbgMemoryRedactedExport(
+  val policyVersion: String,
+  val review: NbgMemoryExportPolicyReview,
+  val items: List<NbgMemoryRedactedExportItem>,
+)
+
 internal data class NbgMemoryUpstreamPolicyAdoptionReview(
   val policyVersion: String,
   val mayRemoveAndroidRuntimePatch: Boolean,
@@ -56,15 +76,73 @@ internal fun nbgReviewMemoryExportRequest(
     if (perItemSelection) add("per_item_selection")
     if (sensitiveScanPassed) add("sensitive_scan_passed")
   }
+  val allowExport = selectedItemCount > 0 &&
+    NBG_MEMORY_EXPORT_REQUIRED_EVIDENCE.all { it in presentEvidence }
   return NbgMemoryExportPolicyReview(
     policyVersion = NBG_MEMORY_EXPORT_POLICY_VERSION,
-    allowExport = false,
+    allowExport = allowExport,
     requiredEvidence = NBG_MEMORY_EXPORT_REQUIRED_EVIDENCE,
     presentEvidence = presentEvidence,
     selectedItemCount = selectedItemCount.coerceAtLeast(0),
-    reason = "Public beta v1 does not expose Memory export; future export requires explicit user trigger, per-item selection, and a passing sensitive-content scan.",
+    reason = if (allowExport) {
+      "Memory export allowed with explicit user trigger, per-item selection, and sensitive-content scan evidence."
+    } else {
+      "Memory export requires at least one selected item plus explicit user trigger, per-item selection, and a passing sensitive-content scan."
+    },
   )
 }
+
+internal fun nbgBuildRedactedMemoryExport(
+  items: List<HanakoMemoryItem>,
+  explicitUserTrigger: Boolean,
+  perItemSelection: Boolean,
+): NbgMemoryRedactedExport {
+  val exportableItems = items.filter { it.enabled }
+  val safeItems = exportableItems.filter { item -> nbgReviewMemoryItem(item).allowSave }
+  val review = nbgReviewMemoryExportRequest(
+    selectedItemCount = exportableItems.size,
+    explicitUserTrigger = explicitUserTrigger,
+    perItemSelection = perItemSelection,
+    sensitiveScanPassed = exportableItems.isNotEmpty() && safeItems.size == exportableItems.size,
+  )
+  return NbgMemoryRedactedExport(
+    policyVersion = NBG_MEMORY_EXPORT_POLICY_VERSION,
+    review = review,
+    items = if (review.allowExport) {
+      safeItems.map { it.toRedactedMemoryExportItem() }
+    } else {
+      emptyList()
+    },
+  )
+}
+
+internal fun NbgMemoryRedactedExport.toJsonString(indentSpaces: Int = 2): String =
+  JSONObject()
+    .put("policyVersion", policyVersion)
+    .put("review", review.toJson())
+    .put("items", JSONArray().also { array ->
+      items.forEach { array.put(it.toJson()) }
+    })
+    .toString(indentSpaces.coerceIn(0, 4))
+
+private fun NbgMemoryExportPolicyReview.toJson(): JSONObject =
+  JSONObject()
+    .put("policyVersion", policyVersion)
+    .put("allowExport", allowExport)
+    .put("requiredEvidence", JSONArray(requiredEvidence))
+    .put("presentEvidence", JSONArray(presentEvidence))
+    .put("selectedItemCount", selectedItemCount)
+    .put("reason", reason)
+
+private fun NbgMemoryRedactedExportItem.toJson(): JSONObject =
+  JSONObject()
+    .put("idHash", idHash)
+    .put("normalizedType", normalizedType)
+    .put("title", title)
+    .put("content", content)
+    .put("tags", JSONArray(tags))
+    .put("sourceSessionHash", sourceSessionHash)
+    .put("enabled", enabled)
 
 internal fun nbgReviewMemoryUpstreamPolicyAdoption(
   upstreamPolicyVersionMatches: Boolean,
@@ -155,6 +233,32 @@ internal fun nbgMemorySensitiveFindings(text: String): List<String> {
   return NBG_MEMORY_SENSITIVE_PATTERNS.mapNotNull { pattern ->
     if (pattern.regex.containsMatchIn(text)) pattern.label else null
   }
+}
+
+private fun HanakoMemoryItem.toRedactedMemoryExportItem(): NbgMemoryRedactedExportItem =
+  NbgMemoryRedactedExportItem(
+    idHash = id.nbgMemoryExportHash(),
+    normalizedType = nbgNormalizeMemoryType(type),
+    title = title.nbgRedactMemoryExportText(limit = 160),
+    content = content.nbgRedactMemoryExportText(limit = NBG_MEMORY_MAX_CONTENT_CHARS),
+    tags = tags.map { it.nbgRedactMemoryExportText(limit = 48) }.filter { it.isNotBlank() }.distinct().take(16),
+    sourceSessionHash = sourceSession.nbgMemoryExportHash().takeIf { sourceSession.isNotBlank() }.orEmpty(),
+    enabled = enabled,
+  )
+
+private fun String.nbgRedactMemoryExportText(limit: Int): String =
+  trim()
+    .replace(Regex("""(?i)\b(bearer)\s+[A-Za-z0-9._~+/=-]{8,}"""), "$1 [redacted]")
+    .replace(Regex("""(?i)\b(api[_-]?key|access[_-]?key|token|refresh[_-]?token|password|secret)\b\s*[:=]\s*["']?[^"'\s,}]{4,}"""), "$1=[redacted]")
+    .replace(Regex("""\bsk-[A-Za-z0-9_-]{8,}\b"""), "sk-[redacted]")
+    .replace(Regex("""\bgh[pousr]_[A-Za-z0-9_]{8,}\b"""), "gh[redacted]")
+    .replace(Regex("""\s+"""), " ")
+    .take(limit)
+
+private fun String.nbgMemoryExportHash(): String {
+  if (isBlank()) return ""
+  val digest = MessageDigest.getInstance("SHA-256").digest(toByteArray())
+  return digest.joinToString("") { "%02x".format(it) }.take(16)
 }
 
 private data class NbgMemorySensitivePattern(
