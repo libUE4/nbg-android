@@ -45,6 +45,12 @@ internal class NbgAgentExpertReviewState {
     message = error.message.orEmpty().ifBlank { error::class.java.simpleName }
     running = false
   }
+
+  fun cancelCurrentRun() {
+    nextRequestSerial()
+    running = false
+    message = "已取消本次评审"
+  }
 }
 
 internal val NbgExpertReviewModelRef.expertReviewKey: String

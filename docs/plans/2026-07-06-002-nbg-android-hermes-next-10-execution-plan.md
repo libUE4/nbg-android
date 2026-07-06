@@ -60,12 +60,12 @@ Effect:
 
 ### Slice 2: Search, Summary, And Skill Learning UI
 
-Status: in progress.
+Status: implemented.
 
 Scope:
 
 - Improve session search result cards with source/type metadata. Implemented first increment: drawer rows now show match type, summary availability, pinned state, and cleaned result snippets.
-- Add session summary index or local summary sidecar. Implemented first increment: history cache now writes a local redacted `session-summary-index.json` sidecar with path, title, snippet, counts, and update time.
+- Add session summary index or local summary sidecar. Implemented: history cache writes a local redacted `session-summary-index.json` sidecar with path, title, snippet, counts, and update time. Drawer search now uses the local sidecar as an immediate offline/fallback index and merges it with HanakoPro HTTP search results.
 - Add Skill draft UI that uses `nbgReviewLearnedSkillDraft()`. Implemented local review-queue increment: Android now has a learned Skill draft queue model, JSON parser, SharedPreferences-backed local store, startup restore, reject/hide action, Skills page counts/rows, missing-evidence display, dangerous-tier highlight, and no auto-install/enable path.
 - Add Skill Curator metrics: use count, last used, stale, pinned, archive/restore. Implemented Android local governance increment: Skills page now shows local use counts, archived count, most-used Skill, archive/restore controls, and explicitly forbids auto-delete/auto-enable.
 
@@ -77,12 +77,12 @@ Acceptance:
 
 ### Slice 3: Team, Expert Review, And Rollback UX
 
-Status: in progress.
+Status: implemented.
 
 Scope:
 
 - Agents Team subtask panel with bounded templates, role progress, cancel/timeout states, and consolidated result card. Implemented run-state increment: Agents page now surfaces the current team task, child Agent rows, evidence refs, task/agent stop controls, and final summary card.
-- Expert Review UI for selecting two or more URL API models, showing separate reference outputs and a consolidated result. Implemented run increment: URL API page now supports verified-model selection, prompt entry, read-only multi-call execution, separate reference outputs, and local consolidated summary.
+- Expert Review UI for selecting two or more URL API models, showing separate reference outputs and a consolidated result. Implemented run increment: URL API page now supports verified-model selection, prompt entry, read-only multi-call execution, separate reference outputs, local consolidated summary, stale-run protection, and failure-state cleanup.
 - Checkpoint / rollback UX that exposes snapshot list and restore confirmation in a predictable place. Implemented first boundary increment: latest-turn rollback dialog now names the Checkpoint/Rollback boundary, history refresh, and restored-file count feedback.
 
 Acceptance:
@@ -96,15 +96,15 @@ Acceptance:
 | Job | Status | Notes |
 | --- | --- | --- |
 | Toolsets switch page | Implemented | `NbgToolsetsDoctorScreen` with persisted `toolsetOverrides`. |
-| Local session search | Improved | Drawer search already calls `searchSessions()`; rows now render match type, summary state, pinned state, and cleaned snippets. |
-| Session summary index | Implemented foundation | Local redacted `session-summary-index.json` sidecar is written with cached history; future UI can surface it beyond drawer snippets. |
-| Skill draft UI | Improved | Skills page now accepts and renders a learned Skill draft queue with local persistence, startup restore, reject/hide, pending/blocked/dangerous counts, and row-level evidence status; backend sync remains next. |
-| Skill Curator | Improved | Skills page shows governance counts, usage metrics, local archive/restore, most-used Skill, and no-auto-delete/no-auto-enable policy. |
-| Agents Team subtask panel | Improved | Agents page shows current task status, child Agent progress, evidence refs, stop controls, bounded templates, and final summary. |
-| Expert Review UI | Improved | URL API page supports opt-in read-only multi-model review with separate outputs and local consolidated summary. |
+| Local session search | Implemented | Drawer search calls `searchSessions()` and now shows local summary-index hits immediately, then merges HanakoPro search results when available. Rows render match type, summary state, pinned state, and cleaned snippets. |
+| Session summary index | Implemented | Local redacted `session-summary-index.json` sidecar is written with cached history and used by drawer search as an offline/fallback index. |
+| Skill draft UI | Implemented | Skills page accepts and renders a learned Skill draft queue with local persistence, startup restore, reject/hide, pending/blocked/dangerous counts, and row-level evidence status. v1 intentionally keeps install/enable blocked until a separate reviewed promotion flow exists. |
+| Skill Curator | Implemented v1 | Skills page shows governance counts, usage metrics, local archive/restore, most-used Skill, and no-auto-delete/no-auto-enable policy. |
+| Agents Team subtask panel | Implemented v1 | Agents page shows current task status, child Agent progress, evidence refs, stop controls, bounded templates, and final summary. |
+| Expert Review UI | Implemented | URL API page supports opt-in read-only multi-model review with separate outputs, local consolidated summary, stale request protection, and failure-state cleanup. |
 | Unified test script | Implemented | `scripts/nbg_test.sh`. |
 | Doctor diagnostics page | Implemented | Toolsets page includes capability health summary. |
-| Checkpoint / rollback UX | Improved foundation | Latest-turn rollback confirmation now explains current boundary and restored-file feedback; arbitrary snapshot list remains next. |
+| Checkpoint / rollback UX | Implemented v1 | Latest-turn rollback confirmation explains the Checkpoint/Rollback boundary, refreshes history after restore, and reports restored-file count. Arbitrary snapshot list is not reintroduced because current Android code and tests forbid the old checkpoint dialog/API surface. |
 
 ## Verification
 
@@ -129,6 +129,22 @@ Slice 2 session summary sidecar verification:
 
 ```bash
 ./gradlew --no-daemon :app:testDebugUnitTest --tests com.nbg.android.HanakoHistorySummaryIndexTest
+```
+
+Result: `BUILD SUCCESSFUL`.
+
+Slice 2 local summary-index search/merge verification:
+
+```bash
+./gradlew :app:testDebugUnitTest --tests com.nbg.android.HanakoHistorySummaryIndexTest
+```
+
+Result: `BUILD SUCCESSFUL`.
+
+Expert Review run-state/cancel verification:
+
+```bash
+./gradlew :app:testDebugUnitTest --tests com.nbg.android.NbgAgentExpertReviewStateTest --tests com.nbg.android.NbgExpertReviewPolicyTest --tests com.nbg.android.AndroidManifestBehaviorTest.androidKeepsAgentMemoryAndCodeGraphAsDefaultBackgroundTooling
 ```
 
 Result: `BUILD SUCCESSFUL`.

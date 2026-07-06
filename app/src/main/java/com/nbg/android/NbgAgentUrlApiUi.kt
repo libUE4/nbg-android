@@ -263,6 +263,7 @@ internal fun NbgUrlApiScreen(
   onExpertReviewPromptChange: (String) -> Unit,
   onToggleExpertReviewModel: (NbgExpertReviewModelRef) -> Unit,
   onRunExpertReview: () -> Unit,
+  onCancelExpertReview: () -> Unit,
 ) {
   Box(
     modifier = Modifier
@@ -338,6 +339,7 @@ internal fun NbgUrlApiScreen(
             onPromptChange = onExpertReviewPromptChange,
             onToggleModel = onToggleExpertReviewModel,
             onRun = onRunExpertReview,
+            onCancel = onCancelExpertReview,
           )
         }
         if (entries.isEmpty()) {
@@ -369,6 +371,7 @@ private fun NbgExpertReviewReadinessCard(
   onPromptChange: (String) -> Unit,
   onToggleModel: (NbgExpertReviewModelRef) -> Unit,
   onRun: () -> Unit,
+  onCancel: () -> Unit,
 ) {
   val models = nbgExpertReviewModelRefs(entries)
   val selected = models.filter { it.expertReviewKey in selectedKeys }.ifEmpty { models.take(2) }
@@ -470,6 +473,14 @@ private fun NbgExpertReviewReadinessCard(
           enabled = review.allowStart && prompt.trim().isNotBlank() && !running,
           onClick = onRun,
         )
+        if (running) {
+          NbgInlineActionButton(
+            label = "取消",
+            icon = Icons.Filled.Stop,
+            enabled = true,
+            onClick = onCancel,
+          )
+        }
         if (message.isNotBlank()) {
           Text(
             text = message,

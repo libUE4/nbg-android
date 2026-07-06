@@ -91,6 +91,15 @@ internal class HanakoHistoryCacheStore(
       parseHanakoSessionSummaryIndex(JSONObject(file.readText(Charsets.UTF_8)), limit)
     }.onFailure { Log.w("NBG_HANAKO", "read history summary index failed", it) }.getOrDefault(emptyList())
 
+  fun searchSummaryIndex(query: String, limit: Int = 40): List<HanakoSessionSummary> =
+    runCatching {
+      nbgSearchSessionSummaryIndex(
+        entries = readSummaryIndex(limit = 500),
+        query = query,
+        limit = limit,
+      )
+    }.onFailure { Log.w("NBG_HANAKO", "search history summary index failed", it) }.getOrDefault(emptyList())
+
   fun writeSummaryIndexEntry(
     sessionPath: String,
     title: String,
@@ -253,3 +262,84 @@ private fun nbgSessionSummaryIndexText(raw: String, limit: Int): String =
     .replace(Regex("\\s+"), " ")
     .trim()
     .take(limit)
+
+private data class HanakoSummaryIndexSearchHit(
+  val summary: HanakoSessionSummary,
+  val score: Int,
+  val updatedAtMs: Long,
+)
+
+internal fun nbgSearchSessionSummaryIndex(
+  entries: List<HanakoSessionSummaryIndexEntry>,
+  query: String,
+  limit: Int = 40,
+): List<HanakoSessionSummary> {
+  val terms = query.trim().lowercase().split(Regex("\\s+")).filter { it.isNotBlank() }
+  if (terms.isEmpty()) return emptyList()
+  return entries.mapNotNull { entry ->
+    val title = entry.title.lowercase()
+    val snippet = entry.snippet.lowercase()
+    val path = entry.sessionPath.lowercase()
+    if (terms.any { term -> term !in title && term !in snippet && term !in path }) return@mapNotNull null
+    val titleMatches = terms.count { it in title }
+    val snippetMatches = terms.count { it in snippet }
+    val pathMatches = terms.count { it in path }
+    val matchType = when {
+      titleMatches > 0 -> "title"
+      snippetMatches > 0 -> "summary"
+      else -> "path"
+    }
+    HanakoSummaryIndexSearchHit(
+      summary = HanakoSessionSummary(
+        path = entry.sessionPath,
+        title = entry.title.ifBlank { "本地会话" },
+        subtitle = buildList {
+          add("本地摘要")
+          if (entry.messageCount > 0) add("${entry.messageCount} 消息")
+          if (entry.todoCount > 0) add("${entry.todoCount} Todo")
+          if (entry.fileCount > 0) add("${entry.fileCount} 文件")
+        }.joinToString(" / "),
+        snippet = entry.snippet.takeIf { it.isNotBlank() },
+        matchType = matchType,
+        pinned = false,
+        hasSummary = entry.hasSummary,
+      ),
+      score = titleMatches * 30 + snippetMatches * 12 + pathMatches * 3,
+      updatedAtMs = entry.updatedAtMs,
+    )
+  }
+    .sortedWith(
+      compareByDescending<HanakoSummaryIndexSearchHit> { it.score }
+        .thenByDescending { it.updatedAtMs },
+    )
+    .map { it.summary }
+    .take(limit.coerceAtLeast(0))
+}
+
+internal fun nbgMergeSessionSearchResults(
+  remote: List<HanakoSessionSummary>,
+  local: List<HanakoSessionSummary>,
+  limit: Int = 60,
+): List<HanakoSessionSummary> {
+  val localByPath = local.associateBy { it.path }
+  val merged = LinkedHashMap<String, HanakoSessionSummary>()
+  remote.forEach { result ->
+    val path = result.path.trim()
+    if (path.isBlank()) return@forEach
+    val localResult = localByPath[path]
+    merged[path] = result.copy(
+      path = path,
+      title = result.title.ifBlank { localResult?.title.orEmpty() }.ifBlank { "搜索结果" },
+      subtitle = result.subtitle.ifBlank { localResult?.subtitle.orEmpty() },
+      snippet = result.snippet ?: localResult?.snippet,
+      matchType = result.matchType ?: localResult?.matchType,
+      pinned = result.pinned || localResult?.pinned == true,
+      hasSummary = result.hasSummary || localResult?.hasSummary == true,
+    )
+  }
+  local.forEach { result ->
+    val path = result.path.trim()
+    if (path.isNotBlank() && path !in merged) merged[path] = result.copy(path = path)
+  }
+  return merged.values.take(limit.coerceAtLeast(0))
+}

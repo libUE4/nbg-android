@@ -2219,15 +2219,30 @@ class HanakoChatController(
       return
     }
     scope.launch {
-      ensureConnected()
-      val info = serverInfo ?: return@launch
       _state.update { it.copy(searchQuery = normalized, searching = true, lastError = null) }
+      val localResults = withContext(Dispatchers.IO) { historyStore.searchSummaryIndex(normalized) }
+      _state.update { current ->
+        if (current.searchQuery == normalized) {
+          current.copy(searchResults = localResults, searching = true)
+        } else {
+          current
+        }
+      }
+      ensureConnected()
+      val info = serverInfo
+      if (info == null) {
+        _state.update { current ->
+          if (current.searchQuery == normalized) current.copy(searching = false) else current
+        }
+        return@launch
+      }
       runCatching {
         withContext(Dispatchers.IO) { http.searchSessions(info, normalized) }
       }.onSuccess { results ->
+        val merged = nbgMergeSessionSearchResults(results, localResults)
         _state.update { current ->
           if (current.searchQuery == normalized) {
-            current.copy(searchResults = results, searching = false)
+            current.copy(searchResults = merged, searching = false)
           } else {
             current
           }
@@ -2238,7 +2253,11 @@ class HanakoChatController(
         Log.w("NBG_HANAKO", "search sessions failed", error)
         _state.update { current ->
           if (current.searchQuery == normalized) {
-            current.copy(searching = false, lastError = message)
+            current.copy(
+              searchResults = if (current.searchResults.isEmpty()) localResults else current.searchResults,
+              searching = false,
+              lastError = if (localResults.isEmpty()) message else current.lastError,
+            )
           } else {
             current
           }

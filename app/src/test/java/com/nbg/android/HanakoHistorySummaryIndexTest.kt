@@ -97,6 +97,78 @@ class HanakoHistorySummaryIndexTest {
     assertEquals(2, parsed.size)
   }
 
+  @Test
+  fun summaryIndexSearchFindsLocalRedactedHistory() {
+    val entries = listOf(
+      HanakoSessionSummaryIndexEntry(
+        sessionPath = "/sessions/build.jsonl",
+        title = "构建修复",
+        snippet = "Gradle build fixed and tests passed",
+        updatedAtMs = 200L,
+        messageCount = 4,
+        todoCount = 1,
+        fileCount = 2,
+      ),
+      HanakoSessionSummaryIndexEntry(
+        sessionPath = "/sessions/keys.jsonl",
+        title = "密钥问题",
+        snippet = "api_key=[redacted] 已经脱敏",
+        updatedAtMs = 300L,
+        messageCount = 2,
+        todoCount = 0,
+        fileCount = 0,
+      ),
+    )
+
+    val buildResults = nbgSearchSessionSummaryIndex(entries, "gradle tests")
+    val redactedResults = nbgSearchSessionSummaryIndex(entries, "redacted")
+
+    assertEquals(listOf("/sessions/build.jsonl"), buildResults.map { it.path })
+    assertEquals("summary", buildResults.single().matchType)
+    assertEquals("本地摘要 / 4 消息 / 1 Todo / 2 文件", buildResults.single().subtitle)
+    assertTrue(buildResults.single().hasSummary)
+    assertEquals(listOf("/sessions/keys.jsonl"), redactedResults.map { it.path })
+    assertFalse(redactedResults.single().snippet.orEmpty().contains("sk-"))
+  }
+
+  @Test
+  fun searchResultsMergeRemoteFirstAndFillLocalSummaryMetadata() {
+    val remote = listOf(
+      HanakoSessionSummary(
+        path = "/sessions/remote.jsonl",
+        title = "Remote",
+        subtitle = "HanakoPro search",
+        snippet = null,
+      ),
+    )
+    val local = listOf(
+      HanakoSessionSummary(
+        path = "/sessions/remote.jsonl",
+        title = "Local",
+        subtitle = "本地摘要 / 3 消息",
+        snippet = "local snippet",
+        matchType = "summary",
+        hasSummary = true,
+      ),
+      HanakoSessionSummary(
+        path = "/sessions/local-only.jsonl",
+        title = "Local only",
+        subtitle = "本地摘要",
+        snippet = "offline hit",
+        matchType = "title",
+        hasSummary = true,
+      ),
+    )
+
+    val merged = nbgMergeSessionSearchResults(remote, local)
+
+    assertEquals(listOf("/sessions/remote.jsonl", "/sessions/local-only.jsonl"), merged.map { it.path })
+    assertEquals("Remote", merged.first().title)
+    assertEquals("local snippet", merged.first().snippet)
+    assertEquals("summary", merged.first().matchType)
+    assertTrue(merged.first().hasSummary)
+  }
+
   private fun history(user: String, assistant: String): HanakoHistorySnapshot =
     HanakoHistorySnapshot(
       messages = listOf(

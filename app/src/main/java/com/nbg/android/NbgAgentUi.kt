@@ -959,40 +959,44 @@ fun NbgAndroidShell(
     expertReviewState.running = true
     expertReviewState.message = "正在调用 ${models.size} 个模型..."
     scope.launch {
-      val references = models.map { modelRef ->
-        val entry = savedApis.firstOrNull { nbgUrlApiProviderId(it.id) == modelRef.providerId }
-        val model = entry?.models?.firstOrNull { it.id == modelRef.modelId }
-        if (entry == null || model == null) {
-          NbgExpertReviewReferenceOutput(modelRef, ok = false, output = "", error = "模型配置已不存在")
-        } else {
-          runCatching {
-            apiClient.generateReadOnlyText(
-              entry = entry,
-              model = model,
-              prompt = prompt,
+      runCatching {
+        val references = models.map { modelRef ->
+          val entry = savedApis.firstOrNull { nbgUrlApiProviderId(it.id) == modelRef.providerId }
+          val model = entry?.models?.firstOrNull { it.id == modelRef.modelId }
+          if (entry == null || model == null) {
+            NbgExpertReviewReferenceOutput(modelRef, ok = false, output = "", error = "模型配置已不存在")
+          } else {
+            runCatching {
+              apiClient.generateReadOnlyText(
+                entry = entry,
+                model = model,
+                prompt = prompt,
+              )
+            }.fold(
+              onSuccess = { result ->
+                NbgExpertReviewReferenceOutput(
+                  model = modelRef,
+                  ok = result.ok,
+                  output = result.text,
+                  error = if (result.ok) "" else result.message,
+                )
+              },
+              onFailure = { error ->
+                NbgExpertReviewReferenceOutput(
+                  model = modelRef,
+                  ok = false,
+                  output = "",
+                  error = error.message.orEmpty().ifBlank { error::class.java.simpleName },
+                )
+              },
             )
-          }.fold(
-            onSuccess = { result ->
-              NbgExpertReviewReferenceOutput(
-                model = modelRef,
-                ok = result.ok,
-                output = result.text,
-                error = if (result.ok) "" else result.message,
-              )
-            },
-            onFailure = { error ->
-              NbgExpertReviewReferenceOutput(
-                model = modelRef,
-                ok = false,
-                output = "",
-                error = error.message.orEmpty().ifBlank { error::class.java.simpleName },
-              )
-            },
-          )
+          }
         }
+        if (!expertReviewState.isCurrent(requestSerial)) return@launch
+        expertReviewState.applyResult(nbgBuildExpertReviewRunResult(prompt, models, references))
+      }.onFailure { error ->
+        if (expertReviewState.isCurrent(requestSerial)) expertReviewState.applyFailure(error)
       }
-      if (!expertReviewState.isCurrent(requestSerial)) return@launch
-      expertReviewState.applyResult(nbgBuildExpertReviewRunResult(prompt, models, references))
     }
   }
   LaunchedEffect(savedApis, selectedUrlApiModel) {
@@ -1469,6 +1473,7 @@ fun NbgAndroidShell(
         onExpertReviewPromptChange = { expertReviewState.prompt = it },
         onToggleExpertReviewModel = { expertReviewState.toggleModel(it) },
         onRunExpertReview = { runExpertReview() },
+        onCancelExpertReview = { expertReviewState.cancelCurrentRun() },
       )
       NbgShellPage.ToolsetsDoctor -> NbgToolsetsDoctorScreen(
         preferences = chatPreferences,
