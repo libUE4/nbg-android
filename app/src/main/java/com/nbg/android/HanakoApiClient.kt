@@ -704,13 +704,6 @@ internal class HanakoApiClient {
           ?: "搜索结果"
         val subtitle = listOfNotNull(
           item.cleanString("agentName"),
-          item.cleanString("matchType")?.let { type ->
-            when (type) {
-              "title" -> "标题匹配"
-              "content" -> "内容匹配"
-              else -> type
-            }
-          },
           item.cleanString("modified")?.take(10),
         ).joinToString(" / ").ifBlank { "HanakoPro search" }
         add(

@@ -1256,11 +1256,7 @@ internal fun NbgConversationRow(
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
         )
-        val meta = when {
-          conversation.pinned -> "置顶"
-          conversation.subtitle.isNotBlank() -> conversation.subtitle
-          else -> "HanakoPro"
-        }
+        val meta = nbgConversationMetaLine(conversation)
         Text(
           meta,
           color = NbgAgentColors.TextMuted,
@@ -1268,6 +1264,17 @@ internal fun NbgConversationRow(
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
         )
+        val snippet = nbgConversationPreviewSnippet(conversation)
+        if (snippet != null) {
+          Text(
+            snippet,
+            color = NbgAgentColors.TextMuted,
+            fontSize = 10.sp,
+            lineHeight = 14.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
       }
     }
     DropdownMenu(

@@ -533,6 +533,39 @@ internal data class NbgAgentConversation(
   val hasSummary: Boolean = false,
 )
 
+internal fun nbgConversationMetaLine(conversation: NbgAgentConversation): String =
+  buildList {
+    if (conversation.pinned) add("置顶")
+    nbgConversationMatchTypeLabel(conversation.matchType)?.let { add(it) }
+    if (conversation.hasSummary) add("有摘要")
+    if (conversation.subtitle.isNotBlank()) add(conversation.subtitle)
+  }
+    .distinct()
+    .joinToString(" · ")
+    .ifBlank { "HanakoPro" }
+
+internal fun nbgConversationPreviewSnippet(conversation: NbgAgentConversation): String? {
+  val cleaned = conversation.snippet
+    ?.replace(Regex("\\s+"), " ")
+    ?.trim()
+    ?.takeIf { it.isNotBlank() && it != conversation.title.trim() }
+    ?: return null
+  return cleaned.take(180)
+}
+
+internal fun nbgConversationMatchTypeLabel(matchType: String?): String? =
+  when (matchType?.trim()?.lowercase()) {
+    null, "" -> null
+    "title" -> "标题匹配"
+    "content", "message", "messages", "body", "text" -> "内容匹配"
+    "summary" -> "摘要匹配"
+    "todo", "todos" -> "Todo 匹配"
+    "tool", "tools" -> "工具匹配"
+    "terminal", "command", "shell" -> "终端匹配"
+    "file", "files", "path" -> "文件匹配"
+    else -> "${matchType.trim().take(24)} 匹配"
+  }
+
 internal fun HanakoContentBlock.applyPatch(patch: HanakoContentBlockPatch): HanakoContentBlock =
   copy(
     title = patch.title?.takeIf { it.isNotBlank() } ?: title,

@@ -60,11 +60,11 @@ Effect:
 
 ### Slice 2: Search, Summary, And Skill Learning UI
 
-Status: next.
+Status: in progress.
 
 Scope:
 
-- Improve session search result cards with source/type metadata.
+- Improve session search result cards with source/type metadata. Implemented first increment: drawer rows now show match type, summary availability, pinned state, and cleaned result snippets.
 - Add session summary index or local summary sidecar.
 - Add Skill draft UI that uses `nbgReviewLearnedSkillDraft()`.
 - Add Skill Curator metrics: use count, last used, stale, pinned, archive/restore.
@@ -96,7 +96,7 @@ Acceptance:
 | Job | Status | Notes |
 | --- | --- | --- |
 | Toolsets switch page | Implemented | `NbgToolsetsDoctorScreen` with persisted `toolsetOverrides`. |
-| Local session search | Existing / improve next | Drawer search already calls `searchSessions()`. |
+| Local session search | Improved | Drawer search already calls `searchSessions()`; rows now render match type, summary state, pinned state, and cleaned snippets. |
 | Session summary index | Next | Needs local summary sidecar or backend summary field. |
 | Skill draft UI | Next | Policy exists; UI flow still needed. |
 | Skill Curator | Next | Needs usage metrics and archive model. |
@@ -112,6 +112,15 @@ Implemented Slice 1 target tests:
 
 ```bash
 ./gradlew --no-daemon :app:testDebugUnitTest --tests com.nbg.android.NbgToolsetControlTest --tests com.nbg.android.AndroidManifestBehaviorTest.toolsetsDoctorControlIsDocumentedAndWired --tests com.nbg.android.AndroidManifestBehaviorTest.unifiedNbgTestScriptRunsStableLocalVerification
+```
+
+Result: `BUILD SUCCESSFUL`.
+
+Slice 2 local session search verification:
+
+```bash
+./gradlew --no-daemon :app:testDebugUnitTest --tests com.nbg.android.NbgAgentConversationDisplayTest
+./scripts/nbg_test.sh
 ```
 
 Result: `BUILD SUCCESSFUL`.
