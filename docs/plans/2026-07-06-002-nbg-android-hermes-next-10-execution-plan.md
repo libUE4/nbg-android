@@ -66,7 +66,7 @@ Scope:
 
 - Improve session search result cards with source/type metadata. Implemented first increment: drawer rows now show match type, summary availability, pinned state, and cleaned result snippets.
 - Add session summary index or local summary sidecar. Implemented first increment: history cache now writes a local redacted `session-summary-index.json` sidecar with path, title, snippet, counts, and update time.
-- Add Skill draft UI that uses `nbgReviewLearnedSkillDraft()`.
+- Add Skill draft UI that uses `nbgReviewLearnedSkillDraft()`. Implemented first review-queue increment: Skills page now exposes a review-only learned Skill draft queue empty state with required evidence and no auto-install/enable promise.
 - Add Skill Curator metrics: use count, last used, stale, pinned, archive/restore. Implemented first governance increment: Skills page now shows curator counts, review pressure, deletable count, trusted bundled count, and explicitly forbids auto-delete/auto-enable.
 
 Acceptance:
@@ -83,7 +83,7 @@ Scope:
 
 - Agents Team subtask panel with bounded templates, role progress, cancel/timeout states, and consolidated result card. Implemented first visibility increment: Agents page now surfaces bounded templates, tool scope, budgets, confirmation tier, cancellation, and consolidation requirement.
 - Expert Review UI for selecting two or more URL API models, showing separate reference outputs and a consolidated result. Implemented first readiness increment: URL API page now surfaces read-only Expert Review readiness from verified models.
-- Checkpoint / rollback UX that exposes snapshot list and restore confirmation in a predictable place.
+- Checkpoint / rollback UX that exposes snapshot list and restore confirmation in a predictable place. Implemented first boundary increment: latest-turn rollback dialog now names the Checkpoint/Rollback boundary, history refresh, and restored-file count feedback.
 
 Acceptance:
 
@@ -98,13 +98,13 @@ Acceptance:
 | Toolsets switch page | Implemented | `NbgToolsetsDoctorScreen` with persisted `toolsetOverrides`. |
 | Local session search | Improved | Drawer search already calls `searchSessions()`; rows now render match type, summary state, pinned state, and cleaned snippets. |
 | Session summary index | Implemented foundation | Local redacted `session-summary-index.json` sidecar is written with cached history; future UI can surface it beyond drawer snippets. |
-| Skill draft UI | Next | Policy exists; UI flow still needed. |
+| Skill draft UI | Implemented foundation | Skills page exposes learned Skill draft review queue rules; real draft persistence/list remains next. |
 | Skill Curator | Implemented foundation | Skills page shows governance counts and no-auto-delete policy; usage metrics/archive remain next. |
 | Agents Team subtask panel | Implemented foundation | Agents page shows bounded templates, budgets, allowed tools, cancellation, and consolidation requirements. |
 | Expert Review UI | Implemented foundation | URL API page shows read-only readiness based on verified models; actual multi-call run UI remains next. |
 | Unified test script | Implemented | `scripts/nbg_test.sh`. |
 | Doctor diagnostics page | Implemented | Toolsets page includes capability health summary. |
-| Checkpoint / rollback UX | Next | Runtime support appears present; user-facing flow needs audit. |
+| Checkpoint / rollback UX | Improved foundation | Latest-turn rollback confirmation now explains current boundary and restored-file feedback; arbitrary snapshot list remains next. |
 
 ## Verification
 
@@ -137,6 +137,14 @@ Skill Curator / Team / Expert Review foundation verification:
 
 ```bash
 ./gradlew --no-daemon :app:testDebugUnitTest --tests com.nbg.android.NbgSkillCuratorModelTest --tests com.nbg.android.NbgExpertReviewPolicyTest --tests com.nbg.android.AndroidManifestBehaviorTest.androidKeepsAgentMemoryAndCodeGraphAsDefaultBackgroundTooling --tests com.nbg.android.AndroidManifestBehaviorTest.androidExposesHanakoSkillsControls
+```
+
+Result: `BUILD SUCCESSFUL`.
+
+Skill draft / rollback boundary verification:
+
+```bash
+./gradlew --no-daemon :app:testDebugUnitTest --tests com.nbg.android.AndroidManifestBehaviorTest.androidExposesHanakoSkillsControls --tests com.nbg.android.AndroidManifestBehaviorTest.rollbackDialogExplainsLatestTurnCheckpointBoundary
 ```
 
 Result: `BUILD SUCCESSFUL`.

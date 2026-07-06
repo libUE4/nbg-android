@@ -5413,6 +5413,10 @@ class AndroidManifestBehaviorTest {
     assertTrue(agentUi.contains("NbgSkillCuratorCard"))
     assertTrue(agentUi.contains("nbgBuildSkillCuratorSummary(snapshot)"))
     assertTrue(agentUi.contains("不会自动删除或启用 Skill"))
+    assertTrue(agentUi.contains("Learned Skill drafts"))
+    assertTrue(agentUi.contains("NbgLearnedSkillDraftQueueCard"))
+    assertTrue(agentUi.contains("NBG_LEARNED_SKILL_DRAFT_REQUIRED_EVIDENCE.joinToString"))
+    assertTrue(agentUi.contains("v1 只允许保存为草稿，不能自动安装或启用"))
     assertTrue(agentUi.contains("NbgSkillBundlesCard"))
     assertTrue(agentUi.contains("NbgExternalSkillPathsCard"))
     assertTrue(agentUi.contains("NbgSkillBundleDialog"))
@@ -5908,5 +5912,15 @@ class AndroidManifestBehaviorTest {
     assertEquals(false, restored.success)
     assertEquals("历史记录 / 未收到结束事件", restored.subtitle)
     assertEquals("空闲", status.label)
+  }
+
+  @Test
+  fun rollbackDialogExplainsLatestTurnCheckpointBoundary() {
+    val dialogs = File("src/main/java/com/nbg/android/NbgAgentDialogs.kt").readText()
+
+    assertTrue(dialogs.contains("Checkpoint / Rollback"))
+    assertTrue(dialogs.contains("当前支持最新 turn 回滚"))
+    assertTrue(dialogs.contains("刷新会话历史"))
+    assertTrue(dialogs.contains("已还原文件数量"))
   }
 }

@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
@@ -105,6 +106,9 @@ internal fun NbgSkillsScreen(
       }
       item {
         NbgSkillCuratorCard(summary = nbgBuildSkillCuratorSummary(snapshot))
+      }
+      item {
+        NbgLearnedSkillDraftQueueCard()
       }
       item {
         NbgSkillBundlesCard(
@@ -244,6 +248,60 @@ internal fun NbgSkillsScreen(
         onSetExternalPaths(paths)
       },
     )
+  }
+}
+
+@Composable
+private fun NbgLearnedSkillDraftQueueCard() {
+  Surface(
+    modifier = Modifier.fillMaxWidth(),
+    shape = RoundedCornerShape(16.dp),
+    color = NbgAgentColors.Drawer,
+    border = BorderStroke(1.dp, NbgAgentColors.InputBorder),
+  ) {
+    Column(
+      modifier = Modifier.padding(horizontal = 13.dp, vertical = 12.dp),
+      verticalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        NbgSkillsIconBox(icon = Icons.Filled.Save, active = false)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+          Text(
+            text = "Learned Skill drafts",
+            color = NbgAgentColors.TextStrong,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+          Text(
+            text = "当前没有待审查草稿",
+            color = NbgAgentColors.TextMuted,
+            fontSize = 11.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
+        NbgSkillsStatusPill(text = "review-only", color = NbgAgentColors.TextMuted)
+      }
+      Text(
+        text = "生成 Skill 必须具备完成证据、来源任务、目标路径复核、SHA-256 和权限等级；v1 只允许保存为草稿，不能自动安装或启用。",
+        color = NbgAgentColors.TextMuted,
+        fontSize = 11.sp,
+        lineHeight = 15.sp,
+      )
+      Text(
+        text = NBG_LEARNED_SKILL_DRAFT_REQUIRED_EVIDENCE.joinToString(", "),
+        color = NbgAgentColors.CodeText,
+        fontSize = 10.5.sp,
+        fontFamily = FontFamily.Monospace,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+      )
+    }
   }
 }
 

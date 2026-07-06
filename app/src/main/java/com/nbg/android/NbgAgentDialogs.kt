@@ -194,14 +194,22 @@ internal fun NbgRevertTurnDialog(
   AlertDialog(
     onDismissRequest = onDismiss,
     containerColor = NbgAgentColors.Drawer,
-    title = { Text("撤回上一轮", color = NbgAgentColors.TextStrong, fontSize = 18.sp) },
+    title = { Text("Checkpoint / Rollback", color = NbgAgentColors.TextStrong, fontSize = 18.sp) },
     text = {
-      Text(
-        text = "将撤回最近一轮 AI 回复，并让 HanakoPro 尝试还原这一轮产生的文件修改。",
-        color = NbgAgentColors.TextMuted,
-        fontSize = 14.sp,
-        lineHeight = 20.sp,
-      )
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+          text = "将撤回最近一轮 AI 回复，并让 HanakoPro 尝试还原这一轮产生的文件修改。",
+          color = NbgAgentColors.TextMuted,
+          fontSize = 14.sp,
+          lineHeight = 20.sp,
+        )
+        Text(
+          text = "当前支持最新 turn 回滚；完成后会刷新会话历史，并在系统消息里显示已还原文件数量。",
+          color = NbgAgentColors.TextMuted,
+          fontSize = 12.sp,
+          lineHeight = 17.sp,
+        )
+      }
     },
     confirmButton = {
       NbgDialogAction(label = "撤回", primary = true, onClick = onConfirm)
