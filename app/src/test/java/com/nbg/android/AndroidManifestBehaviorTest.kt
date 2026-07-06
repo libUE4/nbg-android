@@ -5961,4 +5961,29 @@ class AndroidManifestBehaviorTest {
     assertTrue(dialogs.contains("刷新会话历史"))
     assertTrue(dialogs.contains("已还原文件数量"))
   }
+
+  @Test
+  fun learningPageExposesHermesStyleRecallLoop() {
+    val engine = File("src/main/java/com/nbg/android/NbgAutonomousLearningEngine.kt").readText()
+    val controller = File("src/main/java/com/nbg/android/HanakoChatController.kt").readText()
+    val learningUi = File("src/main/java/com/nbg/android/NbgAutonomousLearningUi.kt").readText()
+    val agentUi = File("src/main/java/com/nbg/android/NbgAgentUi.kt").readText()
+    val test = File("src/test/java/com/nbg/android/NbgAutonomousLearningEngineTest.kt").readText()
+
+    assertTrue(engine.contains("NbgLearningRecallBundle"))
+    assertTrue(engine.contains("nbgBuildLearningRecallBundle"))
+    assertTrue(engine.contains("NbgLearningRecallKind.Session"))
+    assertTrue(engine.contains("nbgLearningRecallSourceRef"))
+    assertTrue(engine.contains("NbgLearningGraphStats"))
+    assertTrue(controller.contains("buildLearningRecallForCurrentSession"))
+    assertTrue(controller.contains("emitToolStatus(tool)"))
+    assertTrue(controller.contains("maybeLearnSkillImprovementFromTool"))
+    assertTrue(controller.contains("historyStore.readSummaryIndex(limit = 200)"))
+    assertTrue(learningUi.contains("NbgLearningRecallCard"))
+    assertTrue(learningUi.contains("跨会话召回"))
+    assertTrue(learningUi.contains("onBuildRecall"))
+    assertTrue(agentUi.contains("onBuildRecall = { hanako.buildLearningRecallForCurrentSession() }"))
+    assertTrue(test.contains("learningRecallRanksLocalMemoryProfileSkillDraftsAndSessions"))
+    assertTrue(test.contains("skillImprovementCandidateUsesToolEvidenceAndStaysReviewOnly"))
+  }
 }

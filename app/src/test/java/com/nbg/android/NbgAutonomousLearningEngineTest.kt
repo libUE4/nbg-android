@@ -150,6 +150,123 @@ class NbgAutonomousLearningEngineTest {
     assertEquals(1, graph.profileCount)
     assertEquals(1, graph.skillCount)
     assertTrue(graph.edges.isNotEmpty())
+    assertEquals(3, graph.stats.nodeCount)
+    assertTrue(graph.stats.linkedNodeCount > 0)
+    assertEquals(0, graph.stats.isolatedNodeCount)
+  }
+
+  @Test
+  fun learningRecallRanksLocalMemoryProfileSkillDraftsAndSessions() {
+    val memory = nbgBuildLocalLearningMemory(
+      listOf(
+        NbgLocalLearningMemoryEntry(
+          id = "m1",
+          type = "project_fact",
+          title = "android build",
+          content = "Run Gradle build verification locally before release.",
+          sourceSessionPath = "/root/private/build.jsonl",
+          updatedAtMs = 10L,
+        ),
+      ),
+    )
+    val profile = nbgBuildUserProfile(
+      listOf(
+        NbgUserProfileEntry(
+          key = "verification",
+          value = "Prefer local Gradle tests and direct reports.",
+          updatedAtMs = 20L,
+        ),
+      ),
+    )
+    val drafts = nbgBuildLearnedSkillDraftQueue(
+      listOf(
+        nbgLearnedSkillDraftQueueEntry(
+          id = "draft-1",
+          skillName = "gradle-build-verification",
+          description = "Gradle build verification workflow.",
+          targetPath = "/root/.hanako/skills/gradle-build-verification/SKILL.md",
+          sourceTaskId = "task-1",
+          completionEvidence = completeEvidence(),
+          draftSha256 = "b".repeat(64),
+          permissionTier = NbgPermissionRiskTier.Medium,
+        ),
+      ),
+    )
+    val sessions = listOf(
+      HanakoSessionSummaryIndexEntry(
+        sessionPath = "/sessions/build.jsonl",
+        title = "Gradle build fix",
+        snippet = "Build verification passed after dependency cleanup.",
+        updatedAtMs = 30L,
+        messageCount = 4,
+        todoCount = 1,
+        fileCount = 2,
+      ),
+    )
+
+    val recall = nbgBuildLearningRecallBundle(
+      query = "gradle build verification",
+      memory = memory,
+      profile = profile,
+      soul = NbgAgentSoulConfig(principles = listOf("Keep verification local.")),
+      skillDrafts = drafts,
+      sessions = sessions,
+    )
+
+    assertTrue(recall.hasResults)
+    assertTrue(recall.items.any { it.kind == NbgLearningRecallKind.Memory })
+    assertTrue(recall.items.any { it.kind == NbgLearningRecallKind.UserProfile })
+    assertTrue(recall.items.any { it.kind == NbgLearningRecallKind.SkillDraft })
+    assertTrue(recall.items.any { it.kind == NbgLearningRecallKind.Session })
+    assertFalse(recall.items.joinToString("\n") { it.sourceRef }.contains("/root/private/build.jsonl"))
+    assertTrue(recall.items.first().score >= recall.items.last().score)
+  }
+
+  @Test
+  fun skillImprovementCandidateUsesToolEvidenceAndStaysReviewOnly() {
+    val engine = engine()
+    val tool = HanakoToolStatus(
+      key = "term-1",
+      kind = "terminal",
+      toolName = "skill_runner",
+      title = "Skill runner failed",
+      subtitle = "Gradle verification",
+      detail = "compile failed after generated workflow",
+      status = "failed",
+      success = false,
+      terminalOutput = HanakoTerminalOutput(
+        sessionId = "term-1",
+        title = "./gradlew test",
+        output = "compile failed",
+        exitCode = 1,
+      ),
+    )
+
+    val candidate = nbgSkillImprovementCandidateFromTool(tool, sessionPath = "/root/private/session.jsonl", nowMs = 400L)
+    val snapshot = engine.learnSkillImprovementFromTool(tool, sessionPath = "/root/private/session.jsonl", nowMs = 400L)
+
+    assertTrue(tool.shouldGenerateSkillImprovementCandidate())
+    assertEquals(NbgLearningCandidateKind.SkillImprovement, candidate?.kind)
+    assertEquals(1, snapshot.auditLog.events.size)
+    assertEquals(NbgLearningCandidateKind.SkillImprovement, snapshot.auditLog.events.single().candidate.kind)
+    assertEquals(1, snapshot.learnedSkillDraftQueue.visibleEntries.size)
+    assertEquals(0, snapshot.learnedSkillDraftQueue.installableCount)
+    assertEquals(0, snapshot.learnedSkillDraftQueue.enableableCount)
+  }
+
+  @Test
+  fun runningToolsDoNotGenerateSkillImprovementNoise() {
+    val running = HanakoToolStatus(
+      key = "term-running",
+      kind = "terminal",
+      toolName = "skill_runner",
+      title = "Skill runner",
+      status = "running",
+      running = true,
+    )
+
+    assertFalse(running.shouldGenerateSkillImprovementCandidate())
+    assertEquals(null, nbgSkillImprovementCandidateFromTool(running))
   }
 
   @Test

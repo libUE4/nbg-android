@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.School
@@ -37,9 +38,19 @@ import androidx.compose.ui.unit.sp
 @Composable
 internal fun NbgAutonomousLearningScreen(
   snapshot: NbgAutonomousLearningSnapshot,
+  scheduleState: NbgScheduleState,
+  gatewayInboxState: NbgGatewayInboxState,
+  trajectoryExportBundle: NbgTrajectoryExportBundle?,
   onBack: () -> Unit,
   onOpenDrawer: () -> Unit,
   onReload: () -> Unit,
+  onCreateSchedule: (NbgScheduledAutomationTemplate) -> Unit,
+  onToggleSchedule: (String, Boolean) -> Unit,
+  onRunScheduleNow: (String) -> Unit,
+  onArchiveGatewayMessage: (String) -> Unit,
+  onBuildTrajectoryExport: () -> Unit,
+  onClearTrajectoryExport: () -> Unit,
+  onBuildRecall: () -> Unit,
   onApproveEvent: (String) -> Unit,
   onRejectEvent: (String) -> Unit,
   onRevertEvent: (String) -> Unit,
@@ -63,13 +74,37 @@ internal fun NbgAutonomousLearningScreen(
         NbgLearningOverviewCard(snapshot = snapshot, onReload = onReload)
       }
       item {
-        NbgLearningGraphCard(snapshot.graph)
+        NbgLearningGraphCard(snapshot.graph, onBuildRecall = onBuildRecall)
+      }
+      item {
+        NbgLearningRecallCard(snapshot.recallBundle)
       }
       item {
         NbgLearningStoresCard(
           snapshot = snapshot,
           onOpenMemory = onOpenMemory,
           onOpenSkills = onOpenSkills,
+        )
+      }
+      item {
+        NbgLearningScheduleCard(
+          state = scheduleState,
+          onCreateSchedule = onCreateSchedule,
+          onToggleSchedule = onToggleSchedule,
+          onRunNow = onRunScheduleNow,
+        )
+      }
+      item {
+        NbgLearningGatewayCard(
+          state = gatewayInboxState,
+          onArchive = onArchiveGatewayMessage,
+        )
+      }
+      item {
+        NbgLearningTrajectoryExportCard(
+          bundle = trajectoryExportBundle,
+          onBuild = onBuildTrajectoryExport,
+          onClear = onClearTrajectoryExport,
         )
       }
       item {
@@ -89,6 +124,155 @@ internal fun NbgAutonomousLearningScreen(
           )
         }
       }
+    }
+  }
+}
+
+@Composable
+private fun NbgLearningScheduleCard(
+  state: NbgScheduleState,
+  onCreateSchedule: (NbgScheduledAutomationTemplate) -> Unit,
+  onToggleSchedule: (String, Boolean) -> Unit,
+  onRunNow: (String) -> Unit,
+) {
+  NbgLearningCard {
+    Text(
+      text = "Scheduled Automations",
+      color = NbgAgentColors.TextStrong,
+      fontSize = 15.sp,
+      fontWeight = FontWeight.SemiBold,
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+      NbgLearningMetric("任务", state.automations.size, NbgAgentColors.Primary, Modifier.weight(1f))
+      NbgLearningMetric("启用", state.enabledCount, NbgAgentColors.StatusGreen, Modifier.weight(1f))
+      NbgLearningMetric("待确认", state.pendingConfirmationCount, NbgAgentColors.StatusYellow, Modifier.weight(1f))
+    }
+    if (state.automations.isEmpty()) {
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        NbgInlineActionButton(label = "日报", icon = Icons.Filled.School) {
+          onCreateSchedule(NbgScheduledAutomationTemplate.DailyProjectSummary)
+        }
+        NbgInlineActionButton(label = "周审计", icon = Icons.Filled.CheckCircle) {
+          onCreateSchedule(NbgScheduledAutomationTemplate.WeeklyLearningAudit)
+        }
+      }
+    } else {
+      state.automations.take(4).forEach { automation ->
+        NbgLearningScheduleRow(automation, onToggleSchedule, onRunNow)
+      }
+    }
+  }
+}
+
+@Composable
+private fun NbgLearningScheduleRow(
+  automation: NbgScheduledAutomation,
+  onToggleSchedule: (String, Boolean) -> Unit,
+  onRunNow: (String) -> Unit,
+) {
+  Surface(
+    modifier = Modifier.fillMaxWidth(),
+    shape = RoundedCornerShape(13.dp),
+    color = NbgAgentColors.SurfaceLow,
+    border = BorderStroke(1.dp, NbgAgentColors.InputBorder),
+  ) {
+    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.weight(1f)) {
+          Text(automation.title, color = NbgAgentColors.TextStrong, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+          Text(
+            "${automation.template.label} · ${automation.cadence} · ${automation.permissionTier.label}",
+            color = NbgAgentColors.TextMuted,
+            fontSize = 11.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
+        NbgInlineActionButton(
+          label = if (automation.enabled) "停用" else "启用",
+          icon = if (automation.enabled) Icons.Filled.Close else Icons.Filled.CheckCircle,
+        ) { onToggleSchedule(automation.id, !automation.enabled) }
+        NbgInlineActionButton(label = "运行", icon = Icons.Filled.Refresh) { onRunNow(automation.id) }
+      }
+    }
+  }
+}
+
+@Composable
+private fun NbgLearningGatewayCard(
+  state: NbgGatewayInboxState,
+  onArchive: (String) -> Unit,
+) {
+  NbgLearningCard {
+    Text(
+      text = "Gateway Inbox",
+      color = NbgAgentColors.TextStrong,
+      fontSize = 15.sp,
+      fontWeight = FontWeight.SemiBold,
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+      NbgLearningMetric("消息", state.activeMessages.size, NbgAgentColors.Primary, Modifier.weight(1f))
+      NbgLearningMetric("可执行", state.executableCount, NbgAgentColors.StatusGreen, Modifier.weight(1f))
+      NbgLearningMetric("阻止", state.blockedCount, NbgAgentColors.StatusRed, Modifier.weight(1f))
+    }
+    state.activeMessages.take(3).forEach { message ->
+      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.weight(1f)) {
+          Text(
+            "${message.source.label} · ${message.status.label}",
+            color = NbgAgentColors.TextMuted,
+            fontSize = 11.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+          Text(
+            message.text,
+            color = NbgAgentColors.TextStrong,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
+        NbgSmallIconAction(Icons.Filled.Close, "归档消息") { onArchive(message.id) }
+      }
+    }
+  }
+}
+
+@Composable
+private fun NbgLearningTrajectoryExportCard(
+  bundle: NbgTrajectoryExportBundle?,
+  onBuild: () -> Unit,
+  onClear: () -> Unit,
+) {
+  NbgLearningCard {
+    Text(
+      text = "Trajectory Export",
+      color = NbgAgentColors.TextStrong,
+      fontSize = 15.sp,
+      fontWeight = FontWeight.SemiBold,
+    )
+    if (bundle == null) {
+      Text(
+        text = "本地导出会话、tool events、task evidence 和 learning events；导出前强制脱敏，不上传。",
+        color = NbgAgentColors.TextMuted,
+        fontSize = 12.sp,
+        lineHeight = 17.sp,
+      )
+      NbgInlineActionButton(label = "生成导出", icon = Icons.Filled.Refresh, onClick = onBuild)
+    } else {
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        NbgLearningMetric("消息", bundle.review.conversationCount, NbgAgentColors.Primary, Modifier.weight(1f))
+        NbgLearningMetric("工具", bundle.review.toolEventCount, NbgAgentColors.StatusGreen, Modifier.weight(1f))
+        NbgLearningMetric("学习", bundle.review.learningEventCount, NbgAgentColors.StatusYellow, Modifier.weight(1f))
+      }
+      Text(
+        text = bundle.review.reason,
+        color = if (bundle.review.allowExport) NbgAgentColors.StatusGreen else NbgAgentColors.StatusRed,
+        fontSize = 12.sp,
+        lineHeight = 17.sp,
+      )
+      NbgInlineActionButton(label = "清除", icon = Icons.Filled.Close, onClick = onClear)
     }
   }
 }
@@ -133,20 +317,34 @@ private fun NbgLearningOverviewCard(
 }
 
 @Composable
-private fun NbgLearningGraphCard(graph: NbgLearningGraph) {
+private fun NbgLearningGraphCard(
+  graph: NbgLearningGraph,
+  onBuildRecall: () -> Unit,
+) {
   NbgLearningCard {
-    Text(
-      text = "学习图谱",
-      color = NbgAgentColors.TextStrong,
-      fontSize = 15.sp,
-      fontWeight = FontWeight.SemiBold,
-    )
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      Text(
+        text = "学习图谱",
+        color = NbgAgentColors.TextStrong,
+        fontSize = 15.sp,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.weight(1f),
+      )
+      NbgInlineActionButton(label = "召回", icon = Icons.Filled.History, onClick = onBuildRecall)
+    }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
       NbgLearningMetric("Memory", graph.memoryCount, NbgAgentColors.Primary, Modifier.weight(1f))
       NbgLearningMetric("画像", graph.profileCount, NbgAgentColors.StatusGreen, Modifier.weight(1f))
       NbgLearningMetric("Skills", graph.skillCount, NbgAgentColors.StatusYellow, Modifier.weight(1f))
       NbgLearningMetric("关联", graph.edges.size, NbgAgentColors.TextMuted, Modifier.weight(1f))
     }
+    Text(
+      text = "linked ${graph.stats.linkedNodeCount}/${graph.stats.nodeCount} · isolated ${graph.stats.isolatedNodeCount}",
+      color = NbgAgentColors.TextDisabled,
+      fontSize = 11.sp,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+    )
     graph.edges.take(3).forEach { edge ->
       Text(
         text = "${edge.fromId} -> ${edge.toId} · ${edge.reason}",
@@ -155,6 +353,56 @@ private fun NbgLearningGraphCard(graph: NbgLearningGraph) {
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
       )
+    }
+  }
+}
+
+@Composable
+private fun NbgLearningRecallCard(bundle: NbgLearningRecallBundle) {
+  NbgLearningCard {
+    Text(
+      text = "跨会话召回",
+      color = NbgAgentColors.TextStrong,
+      fontSize = 15.sp,
+      fontWeight = FontWeight.SemiBold,
+    )
+    if (!bundle.hasResults) {
+      Text(
+        text = "点击召回会从本地 Memory、用户画像、Soul、Skill 草稿和会话摘要中查找相关上下文。",
+        color = NbgAgentColors.TextMuted,
+        fontSize = 12.sp,
+        lineHeight = 17.sp,
+      )
+    } else {
+      Text(
+        text = "\"${bundle.query}\" · ${bundle.items.size}/${bundle.sourceCount}",
+        color = NbgAgentColors.TextDisabled,
+        fontSize = 11.sp,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+      )
+      bundle.items.take(5).forEach { item ->
+        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          NbgSheetTag("${item.kind.label} ${item.score}", primary = item.kind == NbgLearningRecallKind.Memory)
+          Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+              text = item.title,
+              color = NbgAgentColors.TextStrong,
+              fontSize = 12.5.sp,
+              fontWeight = FontWeight.SemiBold,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+              text = item.snippet,
+              color = NbgAgentColors.TextMuted,
+              fontSize = 11.sp,
+              maxLines = 2,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
+        }
+      }
     }
   }
 }

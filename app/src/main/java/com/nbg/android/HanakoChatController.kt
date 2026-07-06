@@ -53,6 +53,8 @@ class HanakoChatController(
   private val learnedSkillDraftStore = NbgLearnedSkillDraftStore(appContext)
   private val skillCuratorStore = NbgSkillCuratorStore(appContext)
   private val autonomousLearningEngine = NbgAutonomousLearningEngine(appContext)
+  private val scheduleStore = NbgScheduleStore(appContext)
+  private val gatewayInboxStore = NbgGatewayInboxStore(appContext)
 
   private var serverInfo: HanakoServerInfo? = null
   private var webSocket: WebSocket? = null
@@ -257,17 +259,133 @@ class HanakoChatController(
     loadLearnedSkillDraftQueue()
     loadSkillCuratorMetadata()
     loadAutonomousLearningSnapshot()
+    loadScheduleState()
+    loadGatewayInboxState()
     connect(allowLaunch = true)
   }
 
   fun loadAutonomousLearningSnapshot() {
-    val snapshot = autonomousLearningEngine.snapshot()
+    val snapshot = autonomousLearningEngine.recall(
+      query = _state.value.searchQuery.ifBlank { _state.value.sessionPath.orEmpty() },
+      sessions = historyStore.readSummaryIndex(limit = 80),
+    )
     _state.update {
       it.copy(
         autonomousLearningSnapshot = snapshot,
         learnedSkillDraftQueue = snapshot.learnedSkillDraftQueue,
       )
     }
+  }
+
+  fun buildLearningRecall(query: String) {
+    scope.launch {
+      val snapshot = withContext(Dispatchers.IO) {
+        autonomousLearningEngine.recall(
+          query = query,
+          sessions = historyStore.readSummaryIndex(limit = 200),
+        )
+      }
+      _state.update {
+        it.copy(
+          autonomousLearningSnapshot = snapshot,
+          learnedSkillDraftQueue = snapshot.learnedSkillDraftQueue,
+        )
+      }
+    }
+  }
+
+  fun buildLearningRecallForCurrentSession() {
+    scope.launch {
+      val currentSessionPath = _state.value.sessionPath
+      val fallbackQuery = _state.value.searchQuery.ifBlank { currentSessionPath.orEmpty() }
+      val snapshot = withContext(Dispatchers.IO) {
+        val history = currentSessionPath?.takeIf { it.isNotBlank() }?.let { historyStore.readCachedHistory(it) }
+        val query = history?.messages
+          ?.lastOrNull { it.role == "user" && it.text.isNotBlank() }
+          ?.text
+          ?.take(400)
+          ?: fallbackQuery
+        autonomousLearningEngine.recall(
+          query = query,
+          sessions = historyStore.readSummaryIndex(limit = 200),
+        )
+      }
+      _state.update {
+        it.copy(
+          autonomousLearningSnapshot = snapshot,
+          learnedSkillDraftQueue = snapshot.learnedSkillDraftQueue,
+        )
+      }
+    }
+  }
+
+  fun loadScheduleState() {
+    _state.update { it.copy(scheduleState = scheduleStore.load()) }
+  }
+
+  fun createScheduledAutomation(template: NbgScheduledAutomationTemplate) {
+    val automation = nbgScheduledAutomation(
+      title = template.label,
+      template = template,
+      prompt = nbgDefaultSchedulePrompt(template),
+    )
+    _state.update { it.copy(scheduleState = scheduleStore.upsert(automation)) }
+  }
+
+  fun setScheduledAutomationEnabled(id: String, enabled: Boolean) {
+    _state.update { it.copy(scheduleState = scheduleStore.setEnabled(id, enabled)) }
+  }
+
+  fun runScheduledAutomationNow(id: String) {
+    val automation = scheduleStore.load().automations.firstOrNull { it.id == id } ?: return
+    val review = nbgReviewScheduledAutomation(automation)
+    val now = System.currentTimeMillis()
+    val event = NbgScheduleRunEvent(
+      id = "run-${automation.id}-$now".sha256Hex().take(24),
+      automationId = automation.id,
+      status = if (review.allowCreate && !review.requiresConfirmation) {
+        NbgScheduleRunStatus.Succeeded
+      } else {
+        NbgScheduleRunStatus.Blocked
+      },
+      summary = review.reason,
+      evidenceRef = review.policyVersion,
+      startedAtMs = now,
+      finishedAtMs = now,
+    )
+    _state.update { it.copy(scheduleState = scheduleStore.recordRun(event)) }
+  }
+
+  fun loadGatewayInboxState() {
+    _state.update { it.copy(gatewayInboxState = gatewayInboxStore.load()) }
+  }
+
+  fun recordGatewayInboxMessage(message: NbgGatewayInboxMessage) {
+    _state.update { it.copy(gatewayInboxState = gatewayInboxStore.record(message)) }
+  }
+
+  fun archiveGatewayInboxMessage(id: String) {
+    _state.update { it.copy(gatewayInboxState = gatewayInboxStore.archive(id)) }
+  }
+
+  fun buildTrajectoryExportForCurrentSession() {
+    scope.launch {
+      val sessionPath = _state.value.sessionPath
+      val history = withContext(Dispatchers.IO) {
+        sessionPath?.takeIf { it.isNotBlank() }?.let { historyStore.readCachedHistory(it) }
+      } ?: HanakoHistorySnapshot()
+      val bundle = nbgBuildTrajectoryExportBundle(
+        history = history,
+        learningLog = autonomousLearningEngine.snapshot().auditLog,
+        explicitUserTrigger = true,
+        localOnlyDestination = true,
+      )
+      _state.update { it.copy(trajectoryExportBundle = bundle) }
+    }
+  }
+
+  fun clearTrajectoryExport() {
+    _state.update { it.copy(trajectoryExportBundle = null) }
   }
 
   fun approveLearningEvent(id: String) {
@@ -470,10 +588,14 @@ class HanakoChatController(
         timestampMs = System.currentTimeMillis(),
       ),
     )
+    val recalled = autonomousLearningEngine.recall(
+      query = prompt,
+      sessions = historyStore.readSummaryIndex(limit = 80),
+    )
     _state.update {
       it.copy(
-        autonomousLearningSnapshot = snapshot,
-        learnedSkillDraftQueue = snapshot.learnedSkillDraftQueue,
+        autonomousLearningSnapshot = recalled.copy(auditLog = snapshot.auditLog),
+        learnedSkillDraftQueue = recalled.learnedSkillDraftQueue,
       )
     }
   }
@@ -2912,7 +3034,7 @@ class HanakoChatController(
           sealAssistantTextSegment()
         }
         parseToolStatus(msg)?.let {
-          onEvent(HanakoChatEvent.ToolStatus(it))
+          emitToolStatus(it)
         }
       }
       "thinking_start" -> {
@@ -2925,12 +3047,12 @@ class HanakoChatController(
       "tool_start", "tool_call", "tool_invocation" -> {
         sealAssistantTextSegment()
         val tool = parseToolStart(msg)
-        onEvent(HanakoChatEvent.ToolStatus(tool))
+        emitToolStatus(tool, allowLearning = false)
         handleBackendAgentToolStarted(msg, tool)
       }
       "tool_end", "tool_result" -> {
         val tool = parseToolEnd(msg)
-        onEvent(HanakoChatEvent.ToolStatus(tool))
+        emitToolStatus(tool)
         handleBackendAgentToolEnded(msg, tool)
         sealAssistantTextSegment()
       }
@@ -3040,7 +3162,7 @@ class HanakoChatController(
         handleBridgeStatus(msg)
       }
       "deferred_result" -> {
-        parseDeferredResult(msg)?.let { onEvent(HanakoChatEvent.ToolStatus(it)) }
+        parseDeferredResult(msg)?.let { emitToolStatus(it) }
         handleBackendAgentDeferredResult(msg)
       }
       "error" -> {
@@ -3091,7 +3213,7 @@ class HanakoChatController(
       else -> {
         when {
           type.endsWith("_progress") || msg.looksLikeToolEvent(type) -> {
-            parseToolStatus(msg)?.let { onEvent(HanakoChatEvent.ToolStatus(it)) }
+            parseToolStatus(msg)?.let { emitToolStatus(it) }
           }
           type.endsWith("_status") -> Unit
         }
@@ -3515,7 +3637,26 @@ class HanakoChatController(
       )
     }
     if (status == "error") {
-      onEvent(HanakoChatEvent.ToolStatus(label))
+      emitToolStatus(HanakoToolStatus(key = label, title = label), allowLearning = false)
+    }
+  }
+
+  private fun emitToolStatus(tool: HanakoToolStatus, allowLearning: Boolean = true) {
+    onEvent(HanakoChatEvent.ToolStatus(tool))
+    if (allowLearning) maybeLearnSkillImprovementFromTool(tool)
+  }
+
+  private fun maybeLearnSkillImprovementFromTool(tool: HanakoToolStatus) {
+    if (!tool.shouldGenerateSkillImprovementCandidate()) return
+    val snapshot = autonomousLearningEngine.learnSkillImprovementFromTool(
+      tool = tool,
+      sessionPath = _state.value.sessionPath.orEmpty(),
+    )
+    _state.update {
+      it.copy(
+        autonomousLearningSnapshot = snapshot,
+        learnedSkillDraftQueue = snapshot.learnedSkillDraftQueue,
+      )
     }
   }
 

@@ -30,6 +30,7 @@ data class NbgLearningGraphEdge(
 data class NbgLearningGraph(
   val nodes: List<NbgLearningGraphNode> = emptyList(),
   val edges: List<NbgLearningGraphEdge> = emptyList(),
+  val stats: NbgLearningGraphStats = nbgLearningGraphStats(nodes, edges),
 ) {
   val memoryCount: Int
     get() = nodes.count { it.kind == "memory" }
@@ -41,6 +42,40 @@ data class NbgLearningGraph(
     get() = nodes.count { it.kind == "skill" }
 }
 
+data class NbgLearningGraphStats(
+  val nodeCount: Int = 0,
+  val edgeCount: Int = 0,
+  val linkedNodeCount: Int = 0,
+  val isolatedNodeCount: Int = 0,
+  val categoryCounts: Map<String, Int> = emptyMap(),
+)
+
+enum class NbgLearningRecallKind(val wireName: String, val label: String) {
+  Memory("memory", "Memory"),
+  UserProfile("user_profile", "用户画像"),
+  Soul("soul", "Soul"),
+  SkillDraft("skill_draft", "Skill 草稿"),
+  Session("session", "会话"),
+}
+
+data class NbgLearningRecallItem(
+  val id: String,
+  val kind: NbgLearningRecallKind,
+  val title: String,
+  val snippet: String,
+  val score: Int,
+  val sourceRef: String = "",
+)
+
+data class NbgLearningRecallBundle(
+  val query: String = "",
+  val items: List<NbgLearningRecallItem> = emptyList(),
+  val sourceCount: Int = 0,
+) {
+  val hasResults: Boolean
+    get() = items.isNotEmpty()
+}
+
 data class NbgAutonomousLearningSnapshot(
   val settings: NbgLearningSettings = NbgLearningSettings(),
   val auditLog: NbgLearningAuditLog = NbgLearningAuditLog(),
@@ -49,6 +84,7 @@ data class NbgAutonomousLearningSnapshot(
   val soul: NbgAgentSoulConfig = NbgAgentSoulConfig(),
   val learnedSkillDraftQueue: NbgLearnedSkillDraftQueue = NbgLearnedSkillDraftQueue(),
   val graph: NbgLearningGraph = NbgLearningGraph(),
+  val recallBundle: NbgLearningRecallBundle = NbgLearningRecallBundle(),
 ) {
   val autoAppliedCount: Int
     get() = auditLog.autoAppliedCount
@@ -89,6 +125,26 @@ internal class NbgAutonomousLearningEngine(
       soul = soul,
       learnedSkillDraftQueue = skillDrafts,
       graph = nbgBuildLearningGraph(memory, profile, soul, skillDrafts),
+    )
+  }
+
+  fun recall(
+    query: String,
+    sessions: List<HanakoSessionSummaryIndexEntry> = emptyList(),
+    limit: Int = 12,
+    settings: NbgLearningSettings = NbgLearningSettings(),
+  ): NbgAutonomousLearningSnapshot {
+    val snapshot = snapshot(settings)
+    return snapshot.copy(
+      recallBundle = nbgBuildLearningRecallBundle(
+        query = query,
+        memory = snapshot.localMemory,
+        profile = snapshot.userProfile,
+        soul = snapshot.soul,
+        skillDrafts = snapshot.learnedSkillDraftQueue,
+        sessions = sessions,
+        limit = limit,
+      ),
     )
   }
 
@@ -157,6 +213,25 @@ internal class NbgAutonomousLearningEngine(
       }
       NbgLearningCandidateKind.ScheduleSuggestion -> Unit
     }
+  }
+
+  fun learnSkillImprovementFromTool(
+    tool: HanakoToolStatus,
+    sessionPath: String = "",
+    nowMs: Long = System.currentTimeMillis(),
+    settings: NbgLearningSettings = NbgLearningSettings(),
+  ): NbgAutonomousLearningSnapshot {
+    val candidate = nbgSkillImprovementCandidateFromTool(
+      tool = tool,
+      sessionPath = sessionPath,
+      nowMs = nowMs,
+    ) ?: return snapshot(settings)
+    val event = nbgLearningEventForCandidate(candidate, settings, nowMs)
+    val audit = auditStore.record(event)
+    if (!event.review.blocked) {
+      learnedSkillDraftStore.upsert(nbgLearnedSkillDraftQueueEntryFromLearningEvent(event))
+    }
+    return snapshot(settings).copy(auditLog = audit)
   }
 }
 
@@ -249,6 +324,69 @@ private fun nbgLearningSkillCandidate(
     tags = listOf("auto", "skill", "learn"),
     createdAtMs = nowMs,
   )
+}
+
+internal fun nbgSkillImprovementCandidateFromTool(
+  tool: HanakoToolStatus,
+  sessionPath: String = "",
+  nowMs: Long = System.currentTimeMillis(),
+): NbgLearningCandidate? {
+  if (!tool.shouldGenerateSkillImprovementCandidate()) return null
+  val toolName = tool.toolName.ifBlank { tool.kind }.ifBlank { tool.title }.trim()
+  val signal = listOf(tool.title, tool.subtitle, tool.detail, tool.terminalOutput?.output.orEmpty())
+    .joinToString(" ")
+    .nbgLearningCompact(limit = 900)
+  val evidence = tool.visibleTaskCompletionEvidence()
+  val review = evidence?.review
+  val hasUsefulSignal = signal.length >= 12 && (
+    tool.success == false ||
+      review?.state == NbgTaskCompletionEvidenceState.Failed ||
+      review?.state == NbgTaskCompletionEvidenceState.Passed
+    )
+  if (!hasUsefulSignal || toolName.isBlank()) return null
+  val skillName = "improve-${nbgLearningSkillName(toolName)}"
+  val summary = when {
+    tool.success == false || review?.state == NbgTaskCompletionEvidenceState.Failed ->
+      "更新 $toolName 相关 Skill：记录失败信号、复查命令/路径/恢复步骤。$signal"
+    else ->
+      "更新 $toolName 相关 Skill：保留本次成功证据和可复用步骤。$signal"
+  }.nbgLearningCompact(limit = NBG_LEARNING_MAX_CONTENT_CHARS)
+  val sourceTaskId = "skill-improve-${tool.key.ifBlank { toolName }.sha256Hex().take(16)}"
+  val draftText = nbgBuildSkillDraftBody(skillName, summary)
+  val risk = nbgHighestPermissionRiskTier(
+    nbgPermissionRiskForAction("skill update", skillName, summary).tier,
+    nbgPermissionRiskForAction(toolName, tool.filePath, signal).tier,
+  )
+  return NbgLearningCandidate(
+    id = "skill-improvement-${sourceTaskId.sha256Hex().take(16)}",
+    kind = NbgLearningCandidateKind.SkillImprovement,
+    title = skillName,
+    content = summary,
+    sourceSessionPath = sessionPath,
+    sourceTaskId = sourceTaskId,
+    sourceTurnId = tool.key.take(120),
+    evidenceBundle = evidence ?: nbgLearningSelfEvidence(sourceTaskId, summary),
+    permissionTier = risk,
+    targetPath = "/data/data/com.nbg.android/files/learned-skills/$skillName/SKILL.md",
+    draftSha256 = draftText.sha256Hex(),
+    tags = listOf("auto", "skill", "improvement", toolName.take(48)),
+    createdAtMs = nowMs,
+  )
+}
+
+internal fun HanakoToolStatus.shouldGenerateSkillImprovementCandidate(): Boolean {
+  if (running) return false
+  val evidenceState = visibleTaskCompletionEvidence()?.review?.state
+  val terminalEnded = terminalOutput?.exitCode != null
+  val terminalFailed = terminalOutput?.exitCode?.let { it != 0 } == true
+  val explicitEnd = status.lowercase() in setOf("done", "complete", "completed", "success", "failed", "error")
+  val skillSignal = listOf(toolName, title, subtitle, detail)
+    .joinToString(" ")
+    .contains("skill", ignoreCase = true)
+  return success == false ||
+    terminalFailed ||
+    evidenceState == NbgTaskCompletionEvidenceState.Failed ||
+    (skillSignal && (success == true || evidenceState == NbgTaskCompletionEvidenceState.Passed || terminalEnded || explicitEnd))
 }
 
 private fun nbgLearnedSkillDraftQueueEntryFromLearningEvent(event: NbgLearningEvent): NbgLearnedSkillDraftQueueEntry =
@@ -373,7 +511,21 @@ internal fun nbgBuildLearningGraph(
   }
   val nodes = memoryNodes + profileNodes + soulNodes + skillNodes
   val edges = nbgLearningGraphEdges(nodes)
-  return NbgLearningGraph(nodes = nodes, edges = edges)
+  return NbgLearningGraph(nodes = nodes, edges = edges, stats = nbgLearningGraphStats(nodes, edges))
+}
+
+internal fun nbgLearningGraphStats(
+  nodes: List<NbgLearningGraphNode>,
+  edges: List<NbgLearningGraphEdge>,
+): NbgLearningGraphStats {
+  val linked = edges.flatMap { listOf(it.fromId, it.toId) }.toSet()
+  return NbgLearningGraphStats(
+    nodeCount = nodes.size,
+    edgeCount = edges.size,
+    linkedNodeCount = linked.size,
+    isolatedNodeCount = (nodes.size - linked.size).coerceAtLeast(0),
+    categoryCounts = nodes.groupingBy { it.kind }.eachCount(),
+  )
 }
 
 private fun nbgLearningGraphEdges(nodes: List<NbgLearningGraphNode>): List<NbgLearningGraphEdge> {
@@ -397,6 +549,112 @@ private fun nbgLearningGraphTokens(text: String): Set<String> =
     .map { it.trim() }
     .filter { it.length >= 2 }
     .toSet()
+
+internal fun nbgBuildLearningRecallBundle(
+  query: String,
+  memory: NbgLocalLearningMemory,
+  profile: NbgUserProfile,
+  soul: NbgAgentSoulConfig,
+  skillDrafts: NbgLearnedSkillDraftQueue,
+  sessions: List<HanakoSessionSummaryIndexEntry> = emptyList(),
+  limit: Int = 12,
+): NbgLearningRecallBundle {
+  val cleanQuery = query.nbgLearningCompact(limit = 240)
+  val queryTokens = nbgLearningGraphTokens(cleanQuery)
+  if (queryTokens.isEmpty()) return NbgLearningRecallBundle(query = cleanQuery)
+  val candidates = buildList {
+    memory.enabledEntries.forEach { entry ->
+      nbgLearningRecallItem(
+        id = "memory:${entry.id}",
+        kind = NbgLearningRecallKind.Memory,
+        title = entry.title,
+        snippet = entry.content,
+        sourceRef = entry.sourceSessionPath,
+        queryTokens = queryTokens,
+      )?.let(::add)
+    }
+    profile.visibleEntries.forEach { entry ->
+      nbgLearningRecallItem(
+        id = "profile:${entry.key}",
+        kind = NbgLearningRecallKind.UserProfile,
+        title = entry.key,
+        snippet = entry.value,
+        sourceRef = entry.sourceEventIds.firstOrNull().orEmpty(),
+        queryTokens = queryTokens,
+      )?.let(::add)
+    }
+    soul.principles.forEachIndexed { index, principle ->
+      nbgLearningRecallItem(
+        id = "soul:$index",
+        kind = NbgLearningRecallKind.Soul,
+        title = "soul",
+        snippet = principle,
+        sourceRef = soul.sourceEventIds.getOrNull(index).orEmpty(),
+        queryTokens = queryTokens,
+      )?.let(::add)
+    }
+    skillDrafts.visibleEntries.forEach { entry ->
+      nbgLearningRecallItem(
+        id = "skill:${entry.id}",
+        kind = NbgLearningRecallKind.SkillDraft,
+        title = entry.skillName,
+        snippet = entry.description.ifBlank { entry.review.reason },
+        sourceRef = entry.review.sourceTaskId,
+        queryTokens = queryTokens,
+      )?.let(::add)
+    }
+    sessions.forEach { entry ->
+      nbgLearningRecallItem(
+        id = "session:${entry.sessionPath.sha256Hex().take(16)}",
+        kind = NbgLearningRecallKind.Session,
+        title = entry.title,
+        snippet = entry.snippet,
+        sourceRef = entry.sessionPath,
+        queryTokens = queryTokens,
+        recencyBoost = if (entry.updatedAtMs > 0L) 2 else 0,
+      )?.let(::add)
+    }
+  }
+  return NbgLearningRecallBundle(
+    query = cleanQuery,
+    items = candidates
+      .sortedWith(compareByDescending<NbgLearningRecallItem> { it.score }.thenBy { it.kind.ordinal }.thenBy { it.title.lowercase() })
+      .take(limit.coerceAtLeast(0)),
+    sourceCount = candidates.size,
+  )
+}
+
+private fun nbgLearningRecallItem(
+  id: String,
+  kind: NbgLearningRecallKind,
+  title: String,
+  snippet: String,
+  sourceRef: String,
+  queryTokens: Set<String>,
+  recencyBoost: Int = 0,
+): NbgLearningRecallItem? {
+  val cleanTitle = title.nbgLearningCompact(limit = 120)
+  val cleanSnippet = snippet.nbgLearningCompact(limit = 320)
+  val tokens = nbgLearningGraphTokens("$cleanTitle $cleanSnippet $sourceRef")
+  val overlap = tokens.intersect(queryTokens)
+  if (overlap.isEmpty()) return null
+  val exactTitleBoost = if (queryTokens.any { it in cleanTitle.lowercase() }) 16 else 0
+  val score = overlap.size * 10 + exactTitleBoost + recencyBoost
+  return NbgLearningRecallItem(
+    id = id,
+    kind = kind,
+    title = cleanTitle.ifBlank { kind.label },
+    snippet = cleanSnippet,
+    score = score,
+    sourceRef = nbgLearningRecallSourceRef(sourceRef),
+  )
+}
+
+private fun nbgLearningRecallSourceRef(raw: String): String {
+  val compact = raw.nbgLearningCompact(limit = 180)
+  if (compact.isBlank()) return ""
+  return if (compact.contains('/') || compact.contains('\\')) "[source-ref]" else compact
+}
 
 private val NBG_MEMORY_LEARNING_MARKERS = listOf(
   "记住",

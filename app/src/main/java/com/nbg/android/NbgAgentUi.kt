@@ -871,6 +871,8 @@ fun NbgAndroidShell(
     }
     if (page == NbgShellPage.Learning) {
       hanako.loadAutonomousLearningSnapshot()
+      hanako.loadScheduleState()
+      hanako.loadGatewayInboxState()
     }
     if (page == NbgShellPage.Skills) {
       hanako.loadSkills()
@@ -1416,9 +1418,23 @@ fun NbgAndroidShell(
       )
       NbgShellPage.Learning -> NbgAutonomousLearningScreen(
         snapshot = hanakoState.autonomousLearningSnapshot,
+        scheduleState = hanakoState.scheduleState,
+        gatewayInboxState = hanakoState.gatewayInboxState,
+        trajectoryExportBundle = hanakoState.trajectoryExportBundle,
         onBack = { shellState.showChat() },
         onOpenDrawer = { scope.launch { drawerState.open() } },
-        onReload = { hanako.loadAutonomousLearningSnapshot() },
+        onReload = {
+          hanako.loadAutonomousLearningSnapshot()
+          hanako.loadScheduleState()
+          hanako.loadGatewayInboxState()
+        },
+        onCreateSchedule = { hanako.createScheduledAutomation(it) },
+        onToggleSchedule = { id, enabled -> hanako.setScheduledAutomationEnabled(id, enabled) },
+        onRunScheduleNow = { hanako.runScheduledAutomationNow(it) },
+        onArchiveGatewayMessage = { hanako.archiveGatewayInboxMessage(it) },
+        onBuildTrajectoryExport = { hanako.buildTrajectoryExportForCurrentSession() },
+        onClearTrajectoryExport = { hanako.clearTrajectoryExport() },
+        onBuildRecall = { hanako.buildLearningRecallForCurrentSession() },
         onApproveEvent = { hanako.approveLearningEvent(it) },
         onRejectEvent = { hanako.rejectLearningEvent(it) },
         onRevertEvent = { hanako.revertLearningEvent(it) },

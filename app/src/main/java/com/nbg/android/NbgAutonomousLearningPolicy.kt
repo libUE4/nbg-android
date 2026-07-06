@@ -423,7 +423,7 @@ private fun nbgPermissionRiskTierForLearning(raw: String?): NbgPermissionRiskTie
   NbgPermissionRiskTier.entries.firstOrNull { it.wireName == raw?.trim()?.lowercase() }
     ?: NbgPermissionRiskTier.Low
 
-private fun String.nbgLearningCompact(limit: Int): String =
+internal fun String.nbgLearningCompact(limit: Int): String =
   nbgRedactDiagnosticText(this)
     .replace(Regex("\\s+"), " ")
     .trim()
