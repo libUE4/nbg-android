@@ -45,7 +45,7 @@ class NbgCapabilityRegistryTest {
     )
 
     assertEquals(
-      listOf("terminal", "hanako", "url_api", "mcp", "skills", "memory", "ftp", "pets", "feedback_export"),
+      listOf("terminal", "hanako", "url_api", "mcp", "skills", "memory", "learning", "ftp", "pets", "feedback_export"),
       registry.capabilities.map { it.id },
     )
     assertEquals(NbgCapabilityHealth.Healthy, registry.byId("mcp")?.health)

@@ -869,6 +869,9 @@ fun NbgAndroidShell(
     if (page == NbgShellPage.Memory) {
       hanako.loadMemoryState()
     }
+    if (page == NbgShellPage.Learning) {
+      hanako.loadAutonomousLearningSnapshot()
+    }
     if (page == NbgShellPage.Skills) {
       hanako.loadSkills()
     }
@@ -1217,6 +1220,7 @@ fun NbgAndroidShell(
         contextUsageLabel = hanakoState.contextUsageLabel ?: hanakoState.runtimeStatus.usageLabel,
         mcpState = hanakoState.mcpState,
         skillsSnapshot = hanakoState.skillsSnapshot,
+        learningSnapshot = hanakoState.autonomousLearningSnapshot,
         capabilities = capabilityRegistry,
         onSearch = hanako::searchSessions,
         onSelectConversation = {
@@ -1242,6 +1246,11 @@ fun NbgAndroidShell(
         },
         onOpenMcp = {
           shellState.showPage(NbgShellPage.Mcp)
+          scope.launch { drawerState.close() }
+        },
+        onOpenLearning = {
+          hanako.loadAutonomousLearningSnapshot()
+          shellState.showPage(NbgShellPage.Learning)
           scope.launch { drawerState.close() }
         },
         onOpenSkills = {
@@ -1364,6 +1373,7 @@ fun NbgAndroidShell(
         mcpState = hanakoState.mcpState,
         skillsSnapshot = hanakoState.skillsSnapshot,
         memoryState = hanakoState.memoryState,
+        learningSnapshot = hanakoState.autonomousLearningSnapshot,
         capabilities = capabilityRegistry,
         teamTask = hanakoState.teamTask,
         multiAgentEnabled = chatPreferences.multiAgentEnabled,
@@ -1373,6 +1383,7 @@ fun NbgAndroidShell(
         onAbortTeamTask = { hanako.abortTeamTask() },
         onAbortTeamAgent = { taskId, agentId -> hanako.abortTeamAgent(taskId, agentId) },
         onOpenMcp = { shellState.showPage(NbgShellPage.Mcp) },
+        onOpenLearning = { shellState.showPage(NbgShellPage.Learning) },
         onOpenSkills = { shellState.showPage(NbgShellPage.Skills) },
         onOpenMemory = { shellState.showPage(NbgShellPage.Memory) },
       )
@@ -1402,6 +1413,17 @@ fun NbgAndroidShell(
         onReload = { query, type -> hanako.loadMemoryState(query, type) },
         onSave = { input, query, type -> hanako.saveMemoryItem(input, query, type) },
         onDelete = { id, query, type -> hanako.deleteMemoryItem(id, query, type) },
+      )
+      NbgShellPage.Learning -> NbgAutonomousLearningScreen(
+        snapshot = hanakoState.autonomousLearningSnapshot,
+        onBack = { shellState.showChat() },
+        onOpenDrawer = { scope.launch { drawerState.open() } },
+        onReload = { hanako.loadAutonomousLearningSnapshot() },
+        onApproveEvent = { hanako.approveLearningEvent(it) },
+        onRejectEvent = { hanako.rejectLearningEvent(it) },
+        onRevertEvent = { hanako.revertLearningEvent(it) },
+        onOpenMemory = { shellState.showPage(NbgShellPage.Memory) },
+        onOpenSkills = { shellState.showPage(NbgShellPage.Skills) },
       )
       NbgShellPage.Skills -> NbgSkillsScreen(
         snapshot = hanakoState.skillsSnapshot,
@@ -1624,6 +1646,7 @@ private fun nbgInitialShellPage(value: String?): NbgShellPage {
     "mcp" -> NbgShellPage.Mcp
     "skills" -> NbgShellPage.Skills
     "memory" -> NbgShellPage.Memory
+    "learning", "learn" -> NbgShellPage.Learning
     "pets", "petdex" -> NbgShellPage.Pets
     "appearance", "theme", "themes" -> NbgShellPage.Appearance
     "url-api", "providers" -> NbgShellPage.UrlApi

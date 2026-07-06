@@ -178,6 +178,7 @@ internal enum class NbgShellPage {
   Terminal,
   Mcp,
   Memory,
+  Learning,
   Skills,
   Pets,
   Appearance,

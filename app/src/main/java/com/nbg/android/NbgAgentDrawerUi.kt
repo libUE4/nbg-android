@@ -187,6 +187,7 @@ internal fun NbgConversationDrawer(
   contextUsageLabel: String?,
   mcpState: HanakoMcpState,
   skillsSnapshot: HanakoSkillsSnapshot,
+  learningSnapshot: NbgAutonomousLearningSnapshot,
   capabilities: NbgCapabilityRegistry,
   onSearch: (String) -> Unit,
   onSelectConversation: (String) -> Unit,
@@ -195,6 +196,7 @@ internal fun NbgConversationDrawer(
   onOpenFileShare: () -> Unit,
   onOpenAgents: () -> Unit,
   onOpenMcp: () -> Unit,
+  onOpenLearning: () -> Unit,
   onOpenSkills: () -> Unit,
   onOpenPets: () -> Unit,
   onOpenAppearance: () -> Unit,
@@ -251,6 +253,7 @@ internal fun NbgConversationDrawer(
           connected = connected,
           mcpState = mcpState,
           skillsSnapshot = skillsSnapshot,
+          learningSnapshot = learningSnapshot,
           capabilities = capabilities,
           onOpenTerminal = onOpenTerminal,
           onOpenFileShare = onOpenFileShare,
@@ -258,6 +261,7 @@ internal fun NbgConversationDrawer(
           onOpenProviders = onOpenProviders,
           onOpenToolsetsDoctor = onOpenToolsetsDoctor,
           onOpenMcp = onOpenMcp,
+          onOpenLearning = onOpenLearning,
           onOpenSkills = onOpenSkills,
           onOpenPets = onOpenPets,
           onOpenAppearance = onOpenAppearance,
@@ -424,6 +428,7 @@ private fun NbgDrawerSettingsPage(
   connected: Boolean,
   mcpState: HanakoMcpState,
   skillsSnapshot: HanakoSkillsSnapshot,
+  learningSnapshot: NbgAutonomousLearningSnapshot,
   capabilities: NbgCapabilityRegistry,
   onOpenTerminal: () -> Unit,
   onOpenFileShare: () -> Unit,
@@ -431,6 +436,7 @@ private fun NbgDrawerSettingsPage(
   onOpenProviders: () -> Unit,
   onOpenToolsetsDoctor: () -> Unit,
   onOpenMcp: () -> Unit,
+  onOpenLearning: () -> Unit,
   onOpenSkills: () -> Unit,
   onOpenPets: () -> Unit,
   onOpenAppearance: () -> Unit,
@@ -583,6 +589,18 @@ private fun NbgDrawerSettingsPage(
           warning = capability?.health == NbgCapabilityHealth.Degraded || capability?.health == NbgCapabilityHealth.Unknown,
           danger = capability?.health == NbgCapabilityHealth.Failed,
           onClick = onOpenMcp,
+        )
+      }
+      item {
+        NbgDrawerFeatureCard(
+          iconText = "L",
+          title = "Learning",
+          subtitle = "自主学习、审计、画像和 Skill 草稿",
+          state = "${learningSnapshot.auditLog.events.size} events",
+          active = learningSnapshot.settings.autonomousLearningEnabled,
+          warning = learningSnapshot.pendingReviewCount > 0,
+          danger = learningSnapshot.blockedCount > 0,
+          onClick = onOpenLearning,
         )
       }
       item {

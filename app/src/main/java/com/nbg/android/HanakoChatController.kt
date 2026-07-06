@@ -52,6 +52,7 @@ class HanakoChatController(
   )
   private val learnedSkillDraftStore = NbgLearnedSkillDraftStore(appContext)
   private val skillCuratorStore = NbgSkillCuratorStore(appContext)
+  private val autonomousLearningEngine = NbgAutonomousLearningEngine(appContext)
 
   private var serverInfo: HanakoServerInfo? = null
   private var webSocket: WebSocket? = null
@@ -255,7 +256,38 @@ class HanakoChatController(
     restoreLatestCachedSessionOnce()
     loadLearnedSkillDraftQueue()
     loadSkillCuratorMetadata()
+    loadAutonomousLearningSnapshot()
     connect(allowLaunch = true)
+  }
+
+  fun loadAutonomousLearningSnapshot() {
+    val snapshot = autonomousLearningEngine.snapshot()
+    _state.update {
+      it.copy(
+        autonomousLearningSnapshot = snapshot,
+        learnedSkillDraftQueue = snapshot.learnedSkillDraftQueue,
+      )
+    }
+  }
+
+  fun approveLearningEvent(id: String) {
+    val snapshot = autonomousLearningEngine.approveEvent(id)
+    _state.update {
+      it.copy(
+        autonomousLearningSnapshot = snapshot,
+        learnedSkillDraftQueue = snapshot.learnedSkillDraftQueue,
+      )
+    }
+  }
+
+  fun rejectLearningEvent(id: String) {
+    val snapshot = autonomousLearningEngine.rejectEvent(id)
+    _state.update { it.copy(autonomousLearningSnapshot = snapshot) }
+  }
+
+  fun revertLearningEvent(id: String) {
+    val snapshot = autonomousLearningEngine.revertEvent(id)
+    _state.update { it.copy(autonomousLearningSnapshot = snapshot) }
   }
 
   fun loadLearnedSkillDraftQueue() {
@@ -401,6 +433,7 @@ class HanakoChatController(
   fun sendPrompt(text: String, displayText: String = text) {
     val prompt = text.trim()
     if (prompt.startsWith("/")) {
+      learnFromUserTurn(prompt)
       sendSlash(prompt)
     } else {
       sendPromptInternal(prompt, displayText = displayText)
@@ -411,6 +444,7 @@ class HanakoChatController(
     val prompt = text.trim()
     if (prompt.isBlank()) return
     if (prompt.startsWith("/")) {
+      learnFromUserTurn(prompt)
       sendSlash(prompt)
       return
     }
@@ -420,9 +454,27 @@ class HanakoChatController(
   fun sendMultiAgentPrompt(text: String, displayText: String = text) {
     val prompt = text.trim()
     if (prompt.startsWith("/")) {
+      learnFromUserTurn(prompt)
       sendSlash(prompt)
     } else {
       sendPromptInternal(prompt, displayText = displayText, multiAgentMode = true)
+    }
+  }
+
+  private fun learnFromUserTurn(prompt: String) {
+    val snapshot = autonomousLearningEngine.learnFromTurn(
+      NbgLearningSourceTurn(
+        userText = prompt,
+        sessionPath = _state.value.sessionPath.orEmpty(),
+        turnId = "android-${System.currentTimeMillis()}",
+        timestampMs = System.currentTimeMillis(),
+      ),
+    )
+    _state.update {
+      it.copy(
+        autonomousLearningSnapshot = snapshot,
+        learnedSkillDraftQueue = snapshot.learnedSkillDraftQueue,
+      )
     }
   }
 
@@ -430,6 +482,7 @@ class HanakoChatController(
     val prompt = text.trim()
     if (prompt.isBlank()) return
     if (prompt.startsWith("/")) {
+      learnFromUserTurn(prompt)
       sendSlash(prompt)
       return
     }
@@ -439,6 +492,7 @@ class HanakoChatController(
   fun createTeamTask(text: String) {
     val prompt = text.trim()
     if (prompt.isBlank()) return
+    learnFromUserTurn(prompt)
     if (prompt.startsWith("/")) {
       sendSlash(prompt)
       return
@@ -449,6 +503,7 @@ class HanakoChatController(
   fun createTeamTaskWithUrlApi(text: String, entry: NbgStoredApi, model: NbgApiModel) {
     val prompt = text.trim()
     if (prompt.isBlank()) return
+    learnFromUserTurn(prompt)
     if (prompt.startsWith("/")) {
       sendSlash(prompt)
       return
@@ -668,6 +723,7 @@ class HanakoChatController(
     val visiblePrompt = displayText.trim().ifBlank { prompt }
     if (prompt.isEmpty()) return
     onEvent(HanakoChatEvent.UserMessage(visiblePrompt))
+    learnFromUserTurn(prompt)
     scope.launch {
       val wasStreaming = _state.value.streaming
       val feedbackAssistantId = if (wasStreaming) {

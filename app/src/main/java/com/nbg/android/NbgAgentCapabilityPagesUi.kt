@@ -59,6 +59,7 @@ internal fun NbgAgentsScreen(
   mcpState: HanakoMcpState,
   skillsSnapshot: HanakoSkillsSnapshot,
   memoryState: HanakoMemoryState,
+  learningSnapshot: NbgAutonomousLearningSnapshot,
   capabilities: NbgCapabilityRegistry,
   teamTask: HanakoTeamTaskStatus?,
   multiAgentEnabled: Boolean,
@@ -68,6 +69,7 @@ internal fun NbgAgentsScreen(
   onAbortTeamTask: () -> Unit,
   onAbortTeamAgent: (String, String) -> Unit,
   onOpenMcp: () -> Unit,
+  onOpenLearning: () -> Unit,
   onOpenSkills: () -> Unit,
   onOpenMemory: () -> Unit,
 ) {
@@ -113,7 +115,9 @@ internal fun NbgAgentsScreen(
           mcpLabel = capabilities.byId("mcp").nbgAgentsCapabilityLabel("MCP ${mcpState.connectors.size}"),
           skillsLabel = capabilities.byId("skills").nbgAgentsCapabilityLabel("Skills ${skillsSnapshot.enabledCount}"),
           memoryLabel = capabilities.byId("memory").nbgAgentsCapabilityLabel("Memory ${memoryState.enabledCount}"),
+          learningLabel = "Learning ${learningSnapshot.auditLog.events.size}",
           onOpenMcp = onOpenMcp,
+          onOpenLearning = onOpenLearning,
           onOpenSkills = onOpenSkills,
           onOpenMemory = onOpenMemory,
         )
@@ -494,7 +498,9 @@ private fun NbgAgentsPermissionCard(
   mcpLabel: String,
   skillsLabel: String,
   memoryLabel: String,
+  learningLabel: String,
   onOpenMcp: () -> Unit,
+  onOpenLearning: () -> Unit,
   onOpenSkills: () -> Unit,
   onOpenMemory: () -> Unit,
 ) {
@@ -516,6 +522,7 @@ private fun NbgAgentsPermissionCard(
       )
       Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         NbgInlineActionButton(label = mcpLabel, icon = Icons.Filled.Settings, onClick = onOpenMcp)
+        NbgInlineActionButton(label = learningLabel, icon = Icons.Filled.Timeline, onClick = onOpenLearning)
         NbgInlineActionButton(label = skillsLabel, icon = Icons.Filled.Code, onClick = onOpenSkills)
         NbgInlineActionButton(label = memoryLabel, icon = Icons.Filled.Memory, onClick = onOpenMemory)
       }

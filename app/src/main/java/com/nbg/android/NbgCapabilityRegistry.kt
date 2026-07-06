@@ -87,6 +87,14 @@ internal fun nbgBuildCapabilityRegistry(
       nbgMcpCapability(mcpState, mcpLoading, mcpError),
       nbgSkillsCapability(skillsSnapshot, skillsLoading, skillsError),
       nbgMemoryCapability(memoryState, memoryLoading, memoryError),
+      NbgCapability(
+        id = "learning",
+        title = "Learning",
+        status = "本地审计",
+        health = NbgCapabilityHealth.Healthy,
+        isBeta = true,
+        diagnosticsAction = "autonomous_learning",
+      ),
       nbgFileShareCapability(fileShareState),
       NbgCapability(
         id = "pets",

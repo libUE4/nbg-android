@@ -101,7 +101,7 @@ internal fun nbgPermissionRiskForConfirmationBlock(block: JSONObject): NbgPermis
   )
 }
 
-private fun nbgHighestPermissionRiskTier(vararg tiers: NbgPermissionRiskTier?): NbgPermissionRiskTier =
+internal fun nbgHighestPermissionRiskTier(vararg tiers: NbgPermissionRiskTier?): NbgPermissionRiskTier =
   listOfNotNull(*tiers).maxBy { it.ordinal }
 
 private fun nbgHighestPermissionRiskTierOrNull(vararg tiers: NbgPermissionRiskTier?): NbgPermissionRiskTier? =
