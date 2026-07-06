@@ -1,0 +1,10 @@
+.gradle/
+.kotlin/
+.cxx/
+build/
+app/build/
+terminal-core/build/
+local.properties
+terminal-core/src/main/jniLibs/arm64-v8a/libnbgcode.so
+*.apk
+*.iml
