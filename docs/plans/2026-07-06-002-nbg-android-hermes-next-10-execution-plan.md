@@ -67,7 +67,7 @@ Scope:
 - Improve session search result cards with source/type metadata. Implemented first increment: drawer rows now show match type, summary availability, pinned state, and cleaned result snippets.
 - Add session summary index or local summary sidecar. Implemented first increment: history cache now writes a local redacted `session-summary-index.json` sidecar with path, title, snippet, counts, and update time.
 - Add Skill draft UI that uses `nbgReviewLearnedSkillDraft()`.
-- Add Skill Curator metrics: use count, last used, stale, pinned, archive/restore.
+- Add Skill Curator metrics: use count, last used, stale, pinned, archive/restore. Implemented first governance increment: Skills page now shows curator counts, review pressure, deletable count, trusted bundled count, and explicitly forbids auto-delete/auto-enable.
 
 Acceptance:
 
@@ -77,12 +77,12 @@ Acceptance:
 
 ### Slice 3: Team, Expert Review, And Rollback UX
 
-Status: next.
+Status: in progress.
 
 Scope:
 
-- Agents Team subtask panel with bounded templates, role progress, cancel/timeout states, and consolidated result card.
-- Expert Review UI for selecting two or more URL API models, showing separate reference outputs and a consolidated result.
+- Agents Team subtask panel with bounded templates, role progress, cancel/timeout states, and consolidated result card. Implemented first visibility increment: Agents page now surfaces bounded templates, tool scope, budgets, confirmation tier, cancellation, and consolidation requirement.
+- Expert Review UI for selecting two or more URL API models, showing separate reference outputs and a consolidated result. Implemented first readiness increment: URL API page now surfaces read-only Expert Review readiness from verified models.
 - Checkpoint / rollback UX that exposes snapshot list and restore confirmation in a predictable place.
 
 Acceptance:
@@ -99,9 +99,9 @@ Acceptance:
 | Local session search | Improved | Drawer search already calls `searchSessions()`; rows now render match type, summary state, pinned state, and cleaned snippets. |
 | Session summary index | Implemented foundation | Local redacted `session-summary-index.json` sidecar is written with cached history; future UI can surface it beyond drawer snippets. |
 | Skill draft UI | Next | Policy exists; UI flow still needed. |
-| Skill Curator | Next | Needs usage metrics and archive model. |
-| Agents Team subtask panel | Next | Policy exists; UI needs per-role task surface. |
-| Expert Review UI | Next | Policy exists; URL API model selection flow needed. |
+| Skill Curator | Implemented foundation | Skills page shows governance counts and no-auto-delete policy; usage metrics/archive remain next. |
+| Agents Team subtask panel | Implemented foundation | Agents page shows bounded templates, budgets, allowed tools, cancellation, and consolidation requirements. |
+| Expert Review UI | Implemented foundation | URL API page shows read-only readiness based on verified models; actual multi-call run UI remains next. |
 | Unified test script | Implemented | `scripts/nbg_test.sh`. |
 | Doctor diagnostics page | Implemented | Toolsets page includes capability health summary. |
 | Checkpoint / rollback UX | Next | Runtime support appears present; user-facing flow needs audit. |
@@ -129,6 +129,14 @@ Slice 2 session summary sidecar verification:
 
 ```bash
 ./gradlew --no-daemon :app:testDebugUnitTest --tests com.nbg.android.HanakoHistorySummaryIndexTest
+```
+
+Result: `BUILD SUCCESSFUL`.
+
+Skill Curator / Team / Expert Review foundation verification:
+
+```bash
+./gradlew --no-daemon :app:testDebugUnitTest --tests com.nbg.android.NbgSkillCuratorModelTest --tests com.nbg.android.NbgExpertReviewPolicyTest --tests com.nbg.android.AndroidManifestBehaviorTest.androidKeepsAgentMemoryAndCodeGraphAsDefaultBackgroundTooling --tests com.nbg.android.AndroidManifestBehaviorTest.androidExposesHanakoSkillsControls
 ```
 
 Result: `BUILD SUCCESSFUL`.

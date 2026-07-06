@@ -125,4 +125,39 @@ class NbgExpertReviewPolicyTest {
     assertEquals("http://127.0.0.1:11434/v1", models[1].providerName)
     assertEquals("qwen-local", models[1].modelLabel)
   }
+
+  @Test
+  fun expertReviewModelRefsUseOnlyVerifiedUrlApiModels() {
+    val entries = listOf(
+      NbgStoredApi(
+        id = "provider-a",
+        name = "Provider A",
+        baseUrl = "https://a.example/v1",
+        apiKey = "secret",
+        models = listOf(
+          NbgApiModel(id = "verified-a", label = "Verified A"),
+          NbgApiModel(id = "unverified-a", label = "Unverified A"),
+        ),
+        verifiedModelIds = setOf("verified-a"),
+      ),
+      NbgStoredApi(
+        id = "provider-b",
+        name = "Provider B",
+        baseUrl = "https://b.example/v1",
+        apiKey = "secret",
+        models = listOf(NbgApiModel(id = "verified-b", label = "")),
+        verifiedModelIds = setOf("verified-b"),
+      ),
+    )
+
+    val refs = nbgExpertReviewModelRefs(entries)
+    val review = nbgReviewExpertReviewRequest(refs, explicitUserTrigger = true)
+
+    assertEquals(listOf("verified-a", "verified-b"), refs.map { it.modelId })
+    assertEquals("Verified A", refs[0].modelLabel)
+    assertEquals("verified-b", refs[1].modelLabel)
+    assertTrue(review.allowStart)
+    assertEquals(2, review.modelCount)
+    assertEquals(2, review.providerCount)
+  }
 }

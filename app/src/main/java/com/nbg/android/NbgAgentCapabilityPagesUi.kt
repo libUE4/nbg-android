@@ -91,6 +91,9 @@ internal fun NbgAgentsScreen(
         )
       }
       item {
+        NbgAgentsTeamPolicyCard()
+      }
+      item {
         NbgAgentsPermissionCard(
           mcpLabel = capabilities.byId("mcp").nbgAgentsCapabilityLabel("MCP ${mcpState.connectors.size}"),
           skillsLabel = capabilities.byId("skills").nbgAgentsCapabilityLabel("Skills ${skillsSnapshot.enabledCount}"),
@@ -103,6 +106,85 @@ internal fun NbgAgentsScreen(
       items(NBG_AGENT_TEMPLATES, key = { it.role }) { item ->
         NbgAgentTemplateCard(item)
       }
+    }
+  }
+}
+
+@Composable
+private fun NbgAgentsTeamPolicyCard() {
+  Surface(
+    modifier = Modifier.fillMaxWidth(),
+    shape = RoundedCornerShape(18.dp),
+    color = NbgAgentColors.Drawer,
+    border = BorderStroke(1.dp, NbgAgentColors.SurfaceBorder),
+  ) {
+    Column(
+      modifier = Modifier.padding(14.dp),
+      verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+      Text(
+        text = "Agents Team 模板",
+        color = NbgAgentColors.TextStrong,
+        fontSize = 15.sp,
+        fontWeight = FontWeight.SemiBold,
+      )
+      Text(
+        text = "后台团队任务只允许 bounded 模板；每个模板都有工具范围、时间预算、确认要求、取消和汇总约束。",
+        color = NbgAgentColors.TextMuted,
+        fontSize = 12.sp,
+        lineHeight = 17.sp,
+      )
+      NbgTeamDelegationTemplate.entries.forEach { template ->
+        NbgAgentsTeamTemplateRow(template)
+      }
+    }
+  }
+}
+
+@Composable
+private fun NbgAgentsTeamTemplateRow(template: NbgTeamDelegationTemplate) {
+  Surface(
+    modifier = Modifier.fillMaxWidth(),
+    shape = RoundedCornerShape(13.dp),
+    color = NbgAgentColors.SurfaceLow,
+    border = BorderStroke(1.dp, NbgAgentColors.InputBorder),
+  ) {
+    Column(
+      modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+      verticalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+          text = template.title,
+          color = NbgAgentColors.TextStrong,
+          fontSize = 13.sp,
+          fontWeight = FontWeight.SemiBold,
+          modifier = Modifier.weight(1f),
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+          text = template.permissionTier.label,
+          color = if (template.permissionTier.requiresConfirmation) NbgAgentColors.Primary else NbgAgentColors.TextMuted,
+          fontSize = 11.sp,
+          fontWeight = FontWeight.Medium,
+        )
+      }
+      Text(
+        text = "${template.maxSubtasks} 子任务 · ${template.maxMinutes} 分钟 · 可取消 · 必须汇总",
+        color = NbgAgentColors.TextMuted,
+        fontSize = 11.sp,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+      )
+      Text(
+        text = template.allowedTools.joinToString(", "),
+        color = NbgAgentColors.CodeText,
+        fontSize = 10.5.sp,
+        fontFamily = FontFamily.Monospace,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+      )
     }
   }
 }

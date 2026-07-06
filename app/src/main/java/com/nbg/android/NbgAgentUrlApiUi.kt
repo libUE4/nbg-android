@@ -319,6 +319,9 @@ internal fun NbgUrlApiScreen(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
       ) {
+        item {
+          NbgExpertReviewReadinessCard(entries = entries)
+        }
         if (entries.isEmpty()) {
           item {
             NbgUrlApiEmptyState(onAdd = onAdd)
@@ -333,6 +336,81 @@ internal fun NbgUrlApiScreen(
           }
         }
       }
+    }
+  }
+}
+
+@Composable
+private fun NbgExpertReviewReadinessCard(entries: List<NbgStoredApi>) {
+  val models = nbgExpertReviewModelRefs(entries)
+  val review = nbgReviewExpertReviewRequest(
+    models = models,
+    explicitUserTrigger = true,
+  )
+  Surface(
+    modifier = Modifier.fillMaxWidth(),
+    shape = RoundedCornerShape(16.dp),
+    color = NbgAgentColors.Drawer,
+    border = BorderStroke(1.dp, if (review.allowStart) NbgAgentColors.PrimarySoft else NbgAgentColors.InputBorder),
+  ) {
+    Column(
+      modifier = Modifier.padding(horizontal = 13.dp, vertical = 12.dp),
+      verticalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        Surface(
+          shape = RoundedCornerShape(13.dp),
+          color = if (review.allowStart) NbgAgentColors.PrimarySoft else NbgAgentColors.SurfaceLow,
+          contentColor = if (review.allowStart) NbgAgentColors.Primary else NbgAgentColors.TextMuted,
+        ) {
+          Icon(
+            imageVector = Icons.Filled.AutoAwesome,
+            contentDescription = null,
+            modifier = Modifier.padding(9.dp),
+          )
+        }
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+          Text(
+            text = "Expert Review",
+            color = NbgAgentColors.TextStrong,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+          Text(
+            text = review.reason,
+            color = if (review.allowStart) NbgAgentColors.TextMuted else NbgAgentColors.StatusRed,
+            fontSize = 11.sp,
+            lineHeight = 15.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
+        Surface(
+          shape = RoundedCornerShape(999.dp),
+          color = NbgAgentColors.SurfaceLow,
+          border = BorderStroke(1.dp, NbgAgentColors.InputBorder),
+        ) {
+          Text(
+            text = "${review.modelCount} 模型",
+            color = if (review.allowStart) NbgAgentColors.StatusGreen else NbgAgentColors.TextMuted,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+          )
+        }
+      }
+      Text(
+        text = "只读 · 默认关闭 · 分开展示参考输出 · 最终必须汇总。${review.costLatencyWarning}",
+        color = NbgAgentColors.TextMuted,
+        fontSize = 11.sp,
+        lineHeight = 15.sp,
+      )
     }
   }
 }

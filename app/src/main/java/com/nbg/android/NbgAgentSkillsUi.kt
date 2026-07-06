@@ -104,6 +104,9 @@ internal fun NbgSkillsScreen(
         )
       }
       item {
+        NbgSkillCuratorCard(summary = nbgBuildSkillCuratorSummary(snapshot))
+      }
+      item {
         NbgSkillBundlesCard(
           bundles = snapshot.bundles,
           busyKey = busyKey,
@@ -241,6 +244,89 @@ internal fun NbgSkillsScreen(
         onSetExternalPaths(paths)
       },
     )
+  }
+}
+
+@Composable
+private fun NbgSkillCuratorCard(summary: NbgSkillCuratorSummary) {
+  Surface(
+    modifier = Modifier.fillMaxWidth(),
+    shape = RoundedCornerShape(16.dp),
+    color = NbgAgentColors.Drawer,
+    border = BorderStroke(1.dp, NbgAgentColors.InputBorder),
+  ) {
+    Column(
+      modifier = Modifier.padding(horizontal = 13.dp, vertical = 12.dp),
+      verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        NbgSkillsIconBox(icon = Icons.Filled.Visibility, active = summary.requiresReviewCount > 0)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+          Text(
+            text = "Skill Curator",
+            color = NbgAgentColors.TextStrong,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+          Text(
+            text = summary.curatorStatus,
+            color = if (summary.unverifiedExternalCount > 0) NbgAgentColors.StatusRed else NbgAgentColors.TextMuted,
+            fontSize = 11.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
+        NbgSkillsStatusPill(
+          text = "${summary.enabledCount}/${summary.visibleCount} ON",
+          color = if (summary.enabledCount > 0) NbgAgentColors.StatusGreen else NbgAgentColors.TextMuted,
+        )
+      }
+      Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+        NbgSkillCuratorMetric("需复核", summary.requiresReviewCount, Modifier.weight(1f))
+        NbgSkillCuratorMetric("可删除", summary.deletableCount, Modifier.weight(1f))
+        NbgSkillCuratorMetric("可信内置", summary.bundledTrustedCount, Modifier.weight(1f))
+      }
+      Text(
+        text = "Curator 只做治理提示；不会自动删除或启用 Skill。",
+        color = NbgAgentColors.TextMuted,
+        fontSize = 11.sp,
+        lineHeight = 15.sp,
+      )
+    }
+  }
+}
+
+@Composable
+private fun NbgSkillCuratorMetric(label: String, value: Int, modifier: Modifier) {
+  Surface(
+    modifier = modifier,
+    shape = RoundedCornerShape(12.dp),
+    color = NbgAgentColors.SurfaceLow,
+    border = BorderStroke(1.dp, NbgAgentColors.InputBorder),
+  ) {
+    Column(
+      modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
+      verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+      Text(
+        text = value.toString(),
+        color = NbgAgentColors.TextStrong,
+        fontSize = 14.sp,
+        fontWeight = FontWeight.SemiBold,
+      )
+      Text(
+        text = label,
+        color = NbgAgentColors.TextMuted,
+        fontSize = 10.sp,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+      )
+    }
   }
 }
 

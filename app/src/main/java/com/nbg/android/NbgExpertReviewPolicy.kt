@@ -32,6 +32,13 @@ internal fun nbgExpertReviewModelRef(entry: NbgStoredApi, model: NbgApiModel): N
     modelLabel = model.label.trim().ifBlank { model.id.trim() },
   )
 
+internal fun nbgExpertReviewModelRefs(entries: List<NbgStoredApi>): List<NbgExpertReviewModelRef> =
+  entries.flatMap { entry ->
+    nbgVerifiedUrlApiModels(entry).map { model ->
+      nbgExpertReviewModelRef(entry, model)
+    }
+  }
+
 internal fun nbgReviewExpertReviewRequest(
   models: List<NbgExpertReviewModelRef>,
   explicitUserTrigger: Boolean,
