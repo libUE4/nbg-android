@@ -12,6 +12,7 @@ data class NbgChatPreferences(
   val themeId: String = "light",
   val fontId: String = "system",
   val multiAgentEnabled: Boolean = true,
+  val toolsetOverrides: Map<String, Boolean> = emptyMap(),
 ) {
   val hasModel: Boolean
     get() = modelProvider.isNotBlank() && modelId.isNotBlank()
@@ -33,6 +34,7 @@ class NbgChatPreferenceStore(context: Context) {
         themeId = root.optString("themeId").ifBlank { "light" },
         fontId = root.optString("fontId").ifBlank { "system" },
         multiAgentEnabled = root.optBoolean("multiAgentEnabled", true),
+        toolsetOverrides = root.optJSONObject("toolsets").toNbgToolsetOverrides(),
       ).normalized()
       if (raw != toJsonString(loaded)) save(loaded) else loaded
     }.getOrDefault(NbgChatPreferences())
@@ -64,7 +66,10 @@ class NbgChatPreferenceStore(context: Context) {
     save(load().copy(fontId = fontId))
 
   fun saveMultiAgentEnabled(enabled: Boolean): NbgChatPreferences =
-    save(load().copy(multiAgentEnabled = enabled))
+    save(load().copy(multiAgentEnabled = enabled).withNbgToolsetEnabled(NbgToolsetId.AgentsTeam, enabled))
+
+  internal fun saveToolsetEnabled(id: NbgToolsetId, enabled: Boolean): NbgChatPreferences =
+    save(load().withNbgToolsetEnabled(id, enabled))
 
   private fun NbgChatPreferences.normalized(): NbgChatPreferences =
     copy(
@@ -75,6 +80,8 @@ class NbgChatPreferenceStore(context: Context) {
       thinkingLevel = nbgNormalizeThinkingLevel(thinkingLevel) ?: "auto",
       themeId = nbgNormalizeThemeId(themeId),
       fontId = nbgNormalizeFontId(fontId),
+      toolsetOverrides = nbgNormalizeToolsetOverrides(toolsetOverrides)
+        .plus(NbgToolsetId.AgentsTeam.wireName to multiAgentEnabled),
     )
 
   private fun toJsonString(preferences: NbgChatPreferences): String =
@@ -87,6 +94,7 @@ class NbgChatPreferenceStore(context: Context) {
       .put("themeId", preferences.themeId)
       .put("fontId", preferences.fontId)
       .put("multiAgentEnabled", preferences.multiAgentEnabled)
+      .put("toolsets", preferences.toNbgToolsetsJson())
       .toString()
 
   private companion object {
@@ -94,3 +102,19 @@ class NbgChatPreferenceStore(context: Context) {
     const val KEY_PREFS = "preferences"
   }
 }
+
+private fun JSONObject?.toNbgToolsetOverrides(): Map<String, Boolean> {
+  val root = this ?: return emptyMap()
+  return buildMap {
+    NbgToolsetId.entries.forEach { id ->
+      if (root.has(id.wireName)) put(id.wireName, root.optBoolean(id.wireName, id.defaultEnabled))
+    }
+  }
+}
+
+private fun NbgChatPreferences.toNbgToolsetsJson(): JSONObject =
+  JSONObject().also { root ->
+    NbgToolsetId.entries.forEach { id ->
+      root.put(id.wireName, nbgToolsetEnabled(id))
+    }
+  }

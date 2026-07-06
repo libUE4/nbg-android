@@ -199,6 +199,7 @@ internal fun NbgConversationDrawer(
   onOpenPets: () -> Unit,
   onOpenAppearance: () -> Unit,
   onOpenProviders: () -> Unit,
+  onOpenToolsetsDoctor: () -> Unit,
   onOpenDiagnosticsExport: () -> Unit,
   onRenameConversation: (String, String) -> Unit,
   onDeleteConversation: (String) -> Unit,
@@ -255,6 +256,7 @@ internal fun NbgConversationDrawer(
           onOpenFileShare = onOpenFileShare,
           onOpenAgents = onOpenAgents,
           onOpenProviders = onOpenProviders,
+          onOpenToolsetsDoctor = onOpenToolsetsDoctor,
           onOpenMcp = onOpenMcp,
           onOpenSkills = onOpenSkills,
           onOpenPets = onOpenPets,
@@ -427,6 +429,7 @@ private fun NbgDrawerSettingsPage(
   onOpenFileShare: () -> Unit,
   onOpenAgents: () -> Unit,
   onOpenProviders: () -> Unit,
+  onOpenToolsetsDoctor: () -> Unit,
   onOpenMcp: () -> Unit,
   onOpenSkills: () -> Unit,
   onOpenPets: () -> Unit,
@@ -504,6 +507,18 @@ private fun NbgDrawerSettingsPage(
         .weight(1f),
       verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+      item {
+        NbgDrawerFeatureCard(
+          iconText = "DR",
+          title = "Toolsets / Doctor",
+          subtitle = "能力开关、状态检查和故障入口",
+          state = capabilities.summaryLabel,
+          active = capabilities.worstHealth == NbgCapabilityHealth.Healthy,
+          warning = capabilities.worstHealth == NbgCapabilityHealth.Degraded || capabilities.worstHealth == NbgCapabilityHealth.Unknown,
+          danger = capabilities.worstHealth == NbgCapabilityHealth.Failed,
+          onClick = onOpenToolsetsDoctor,
+        )
+      }
       item {
         val capability = capabilities.byId("hanako")
         NbgDrawerFeatureCard(

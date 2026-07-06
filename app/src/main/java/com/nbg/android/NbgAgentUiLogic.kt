@@ -182,6 +182,7 @@ internal enum class NbgShellPage {
   Pets,
   Appearance,
   UrlApi,
+  ToolsetsDoctor,
 }
 
 internal enum class NbgAgentRole {

@@ -246,6 +246,9 @@ fun NbgAndroidShell(
   fun saveMultiAgentEnabled(enabled: Boolean) {
     chatPreferenceState.applySaved(chatPreferenceStore.saveMultiAgentEnabled(enabled))
   }
+  fun saveToolsetEnabled(id: NbgToolsetId, enabled: Boolean) {
+    chatPreferenceState.applySaved(chatPreferenceStore.saveToolsetEnabled(id, enabled))
+  }
   fun clearPreferredModel() {
     chatPreferenceState.applySaved(
       chatPreferenceStore.save(
@@ -1206,6 +1209,10 @@ fun NbgAndroidShell(
           shellState.showPage(NbgShellPage.UrlApi)
           scope.launch { drawerState.close() }
         },
+        onOpenToolsetsDoctor = {
+          shellState.showPage(NbgShellPage.ToolsetsDoctor)
+          scope.launch { drawerState.close() }
+        },
         onRenameConversation = hanako::renameSession,
         onDeleteConversation = { path ->
           hanako.deleteSession(path)
@@ -1394,6 +1401,26 @@ fun NbgAndroidShell(
           }
         },
       )
+      NbgShellPage.ToolsetsDoctor -> NbgToolsetsDoctorScreen(
+        preferences = chatPreferences,
+        capabilities = capabilityRegistry,
+        sessionCount = conversations.size,
+        savedUrlApiCount = savedApis.size,
+        compressionAvailable = hanakoState.compressionAvailable,
+        onBack = { shellState.showChat() },
+        onOpenDrawer = { scope.launch { drawerState.open() } },
+        onSetToolsetEnabled = ::saveToolsetEnabled,
+        onOpenTerminal = { shellState.showPage(NbgShellPage.Terminal) },
+        onOpenAgents = { shellState.showPage(NbgShellPage.Agents) },
+        onOpenMcp = { shellState.showPage(NbgShellPage.Mcp) },
+        onOpenSkills = { shellState.showPage(NbgShellPage.Skills) },
+        onOpenMemory = { shellState.showPage(NbgShellPage.Memory) },
+        onOpenProviders = {
+          loadSavedApis()
+          shellState.showPage(NbgShellPage.UrlApi)
+        },
+        onOpenDiagnosticsExport = { openDiagnosticsExportDialog() },
+      )
     }
   }
 
@@ -1526,6 +1553,7 @@ private fun nbgInitialShellPage(value: String?): NbgShellPage {
     "pets", "petdex" -> NbgShellPage.Pets
     "appearance", "theme", "themes" -> NbgShellPage.Appearance
     "url-api", "providers" -> NbgShellPage.UrlApi
+    "toolsets", "doctor", "tools" -> NbgShellPage.ToolsetsDoctor
     else -> NbgShellPage.Chat
   }
 }

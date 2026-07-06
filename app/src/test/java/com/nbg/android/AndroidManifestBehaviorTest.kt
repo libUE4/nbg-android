@@ -5823,6 +5823,60 @@ class AndroidManifestBehaviorTest {
   }
 
   @Test
+  fun toolsetsDoctorControlIsDocumentedAndWired() {
+    val preferences = File("src/main/java/com/nbg/android/NbgChatPreferenceStore.kt").readText()
+    val control = File("src/main/java/com/nbg/android/NbgToolsetControl.kt").readText()
+    val doctorUi = File("src/main/java/com/nbg/android/NbgToolsetsDoctorUi.kt").readText()
+    val drawerUi = File("src/main/java/com/nbg/android/NbgAgentDrawerUi.kt").readText()
+    val agentUi = File("src/main/java/com/nbg/android/NbgAgentUi.kt").readText()
+    val logic = File("src/main/java/com/nbg/android/NbgAgentUiLogic.kt").readText()
+    val test = File("src/test/java/com/nbg/android/NbgToolsetControlTest.kt").readText()
+
+    listOf(
+      "toolsetOverrides",
+      "saveToolsetEnabled",
+      "toNbgToolsetsJson",
+      "toNbgToolsetOverrides",
+    ).forEach {
+      assertTrue(preferences.contains(it))
+    }
+    listOf(
+      "NbgToolsetId",
+      "ExpertReview(\"expert_review\"",
+      "ContextCompression(\"context_compression\"",
+      "nbgBuildToolsetControlRows",
+      "withNbgToolsetEnabled",
+      "nbgNormalizeToolsetOverrides",
+    ).forEach {
+      assertTrue(control.contains(it))
+    }
+    assertTrue(doctorUi.contains("NbgToolsetsDoctorScreen"))
+    assertTrue(doctorUi.contains("NbgToolsetControlCard"))
+    assertTrue(doctorUi.contains("NbgToolsetsDoctorSummary"))
+    assertTrue(drawerUi.contains("Toolsets / Doctor"))
+    assertTrue(drawerUi.contains("onOpenToolsetsDoctor"))
+    assertTrue(logic.contains("ToolsetsDoctor"))
+    assertTrue(agentUi.contains("NbgShellPage.ToolsetsDoctor -> NbgToolsetsDoctorScreen"))
+    assertTrue(agentUi.contains("\"toolsets\", \"doctor\", \"tools\" -> NbgShellPage.ToolsetsDoctor"))
+    assertTrue(test.contains("defaultsKeepCoreToolsetsOnAndExpertReviewOff"))
+    assertTrue(test.contains("buildRowsCombinePreferencesCapabilityHealthAndDerivedSignals"))
+  }
+
+  @Test
+  fun unifiedNbgTestScriptRunsStableLocalVerification() {
+    val script = File("../scripts/nbg_test.sh").readText()
+
+    assertTrue(script.contains("set -euo pipefail"))
+    assertTrue(script.contains("export TZ=UTC"))
+    assertTrue(script.contains("unset OPENAI_API_KEY"))
+    assertTrue(script.contains("exec ./gradlew --no-daemon \"$@\""))
+    assertTrue(script.contains(":app:testDebugUnitTest"))
+    assertTrue(script.contains(":terminal-core:testDebugUnitTest"))
+    assertTrue(script.contains(":android-mcp-server:testDebugUnitTest"))
+    assertTrue(script.contains(":app:assembleDebug"))
+  }
+
+  @Test
   fun restoredHistoryToolsDoNotKeepChatInRunningState() {
     val restored = HanakoToolStatus(
       key = "history:check",
