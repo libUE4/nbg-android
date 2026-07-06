@@ -65,7 +65,7 @@ Status: in progress.
 Scope:
 
 - Improve session search result cards with source/type metadata. Implemented first increment: drawer rows now show match type, summary availability, pinned state, and cleaned result snippets.
-- Add session summary index or local summary sidecar.
+- Add session summary index or local summary sidecar. Implemented first increment: history cache now writes a local redacted `session-summary-index.json` sidecar with path, title, snippet, counts, and update time.
 - Add Skill draft UI that uses `nbgReviewLearnedSkillDraft()`.
 - Add Skill Curator metrics: use count, last used, stale, pinned, archive/restore.
 
@@ -97,7 +97,7 @@ Acceptance:
 | --- | --- | --- |
 | Toolsets switch page | Implemented | `NbgToolsetsDoctorScreen` with persisted `toolsetOverrides`. |
 | Local session search | Improved | Drawer search already calls `searchSessions()`; rows now render match type, summary state, pinned state, and cleaned snippets. |
-| Session summary index | Next | Needs local summary sidecar or backend summary field. |
+| Session summary index | Implemented foundation | Local redacted `session-summary-index.json` sidecar is written with cached history; future UI can surface it beyond drawer snippets. |
 | Skill draft UI | Next | Policy exists; UI flow still needed. |
 | Skill Curator | Next | Needs usage metrics and archive model. |
 | Agents Team subtask panel | Next | Policy exists; UI needs per-role task surface. |
@@ -121,6 +121,14 @@ Slice 2 local session search verification:
 ```bash
 ./gradlew --no-daemon :app:testDebugUnitTest --tests com.nbg.android.NbgAgentConversationDisplayTest
 ./scripts/nbg_test.sh
+```
+
+Result: `BUILD SUCCESSFUL`.
+
+Slice 2 session summary sidecar verification:
+
+```bash
+./gradlew --no-daemon :app:testDebugUnitTest --tests com.nbg.android.HanakoHistorySummaryIndexTest
 ```
 
 Result: `BUILD SUCCESSFUL`.

@@ -2447,13 +2447,14 @@ class HanakoChatController(
         val title = stateTitle
           ?: snapshotToSave.messages.firstOrNull { it.role == "user" }?.text?.lineSequence()?.firstOrNull()?.take(40)
           ?: "新聊天"
+        val updatedAtMs = System.currentTimeMillis()
         val cacheDir = historyStore.historyCacheDir()
         cacheDir.mkdirs()
         val body = JSONObject()
           .put("version", 1)
           .put("sessionPath", sessionPath)
           .put("title", title)
-          .put("updatedAt", System.currentTimeMillis())
+          .put("updatedAt", updatedAtMs)
           .put("snapshot", snapshotToSave.toJson())
         val file = historyStore.historyCacheFile(sessionPath)
         val tmp = File(cacheDir, "${file.name}.tmp")
@@ -2465,6 +2466,12 @@ class HanakoChatController(
             .put("title", title)
             .toString(),
           Charsets.UTF_8,
+        )
+        historyStore.writeSummaryIndexEntry(
+          sessionPath = sessionPath,
+          title = title,
+          snapshot = snapshotToSave,
+          updatedAtMs = updatedAtMs,
         )
       }.onFailure { Log.w("NBG_HANAKO", "save history cache failed for $sessionPath", it) }
     }
