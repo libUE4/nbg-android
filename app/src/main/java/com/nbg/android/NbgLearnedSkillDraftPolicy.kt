@@ -178,6 +178,19 @@ internal fun nbgBuildLearnedSkillDraftQueue(
 internal fun parseNbgLearnedSkillDraftQueue(array: JSONArray?): NbgLearnedSkillDraftQueue =
   nbgBuildLearnedSkillDraftQueue(array.toNbgLearnedSkillDraftEntries())
 
+internal fun parseNbgLearnedSkillDraftQueue(raw: String?): NbgLearnedSkillDraftQueue =
+  runCatching {
+    parseNbgLearnedSkillDraftQueue(JSONArray(raw?.takeIf { it.isNotBlank() } ?: "[]"))
+  }.getOrDefault(NbgLearnedSkillDraftQueue())
+
+internal fun NbgLearnedSkillDraftQueue.toJsonArray(): JSONArray =
+  JSONArray().also { array ->
+    entries.forEach { array.put(it.toJson()) }
+  }
+
+internal fun NbgLearnedSkillDraftQueue.toJsonString(): String =
+  toJsonArray().toString()
+
 private fun JSONArray?.toNbgLearnedSkillDraftEntries(): List<NbgLearnedSkillDraftQueueEntry> {
   val array = this ?: return emptyList()
   return buildList {
@@ -190,6 +203,19 @@ private fun JSONArray?.toNbgLearnedSkillDraftEntries(): List<NbgLearnedSkillDraf
 
 private fun JSONObject.toNbgLearnedSkillDraftEntry(): NbgLearnedSkillDraftQueueEntry? {
   val skillName = cleanStringAny("skillName", "name") ?: return null
+  optJSONObject("review")?.toNbgLearnedSkillDraftReview(skillName)?.let { review ->
+    return NbgLearnedSkillDraftQueueEntry(
+      id = cleanString("id").orEmpty().ifBlank { nbgLearnedSkillDraftFallbackId(skillName, review.sourceTaskId) },
+      skillName = skillName.trim(),
+      description = cleanStringAny("description", "summary").orEmpty().nbgLearnedSkillDraftCompact(),
+      sourceTaskTitle = cleanStringAny("sourceTaskTitle", "taskTitle").orEmpty().nbgLearnedSkillDraftCompact(limit = 120),
+      review = review,
+      status = cleanStringAny("status", "state")?.let(::nbgLearnedSkillDraftStatusForWire)
+        ?: if (review.allowDraft) NbgLearnedSkillDraftStatus.PendingReview else NbgLearnedSkillDraftStatus.BlockedMissingEvidence,
+      createdAtMs = optLong("createdAtMs", 0L).coerceAtLeast(0L),
+      updatedAtMs = optLong("updatedAtMs", optLong("createdAtMs", 0L)).coerceAtLeast(0L),
+    )
+  }
   val targetPath = cleanStringAny("targetPath", "path", "filePath").orEmpty()
   val sourceTaskId = cleanStringAny("sourceTaskId", "taskId", "contractId").orEmpty()
   return nbgLearnedSkillDraftQueueEntry(
@@ -210,6 +236,70 @@ private fun JSONObject.toNbgLearnedSkillDraftEntry(): NbgLearnedSkillDraftQueueE
     updatedAtMs = optLong("updatedAtMs", optLong("createdAtMs", 0L)),
     status = cleanStringAny("status", "state")?.let(::nbgLearnedSkillDraftStatusForWire),
   )
+}
+
+private fun NbgLearnedSkillDraftQueueEntry.toJson(): JSONObject =
+  JSONObject()
+    .put("id", id)
+    .put("skillName", skillName)
+    .put("description", description)
+    .put("sourceTaskTitle", sourceTaskTitle)
+    .put("status", status.wireName)
+    .put("createdAtMs", createdAtMs)
+    .put("updatedAtMs", updatedAtMs)
+    .put("review", review.toJson())
+
+private fun NbgLearnedSkillDraftReview.toJson(): JSONObject =
+  JSONObject()
+    .put("policyVersion", policyVersion)
+    .put("allowDraft", allowDraft)
+    .put("allowInstall", false)
+    .put("allowEnable", false)
+    .put("requiresReview", true)
+    .put("requiredEvidence", JSONArray(requiredEvidence))
+    .put("presentEvidence", JSONArray(presentEvidence))
+    .put("permissionTier", permissionTier.wireName)
+    .put("sourceTaskId", sourceTaskId)
+    .put("targetPathLabel", targetPathLabel)
+    .put("reason", reason)
+
+private fun JSONObject.toNbgLearnedSkillDraftReview(skillName: String): NbgLearnedSkillDraftReview {
+  val required = optJSONArray("requiredEvidence")
+    .toNbgLearnedSkillDraftStringList()
+    .ifEmpty { NBG_LEARNED_SKILL_DRAFT_REQUIRED_EVIDENCE }
+  val present = optJSONArray("presentEvidence")
+    .toNbgLearnedSkillDraftStringList()
+    .distinct()
+  val missing = required - present.toSet()
+  val permissionTier = nbgLearnedSkillDraftPermissionTier(cleanStringAny("permissionTier", "riskTier", "risk"))
+  return NbgLearnedSkillDraftReview(
+    policyVersion = cleanString("policyVersion") ?: NBG_LEARNED_SKILL_DRAFT_POLICY_VERSION,
+    allowDraft = skillName.trim().isNotBlank() && missing.isEmpty(),
+    allowInstall = false,
+    allowEnable = false,
+    requiresReview = true,
+    requiredEvidence = required,
+    presentEvidence = present,
+    permissionTier = permissionTier,
+    sourceTaskId = cleanString("sourceTaskId").orEmpty().take(120),
+    targetPathLabel = cleanString("targetPathLabel").orEmpty().ifBlank { "[skill-draft-path]" },
+    reason = cleanString("reason")
+      ?: if (missing.isEmpty()) {
+        "Skill 草稿证据完整；安装和启用仍需用户审核确认。"
+      } else {
+        "Skill 草稿缺少证据：${missing.joinToString(", ")}；学习结果保持未安装状态。"
+      },
+  )
+}
+
+private fun JSONArray?.toNbgLearnedSkillDraftStringList(): List<String> {
+  val array = this ?: return emptyList()
+  return buildList {
+    for (index in 0 until array.length()) {
+      val value = array.optString(index).trim()
+      if (value.isNotBlank() && value != "null" && value != "undefined") add(value.take(120))
+    }
+  }
 }
 
 private val NbgLearnedSkillDraftStatus.sortOrder: Int

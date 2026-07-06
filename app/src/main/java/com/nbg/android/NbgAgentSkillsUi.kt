@@ -70,6 +70,7 @@ internal fun NbgSkillsScreen(
   onUpdateBundle: (String, String, List<String>) -> Unit,
   onDeleteBundle: (String) -> Unit,
   onSetExternalPaths: (List<String>) -> Unit,
+  onRejectLearnedDraft: (String) -> Unit = {},
 ) {
   var addOpen by remember { mutableStateOf(false) }
   var deleteTarget by remember { mutableStateOf<HanakoSkillSummary?>(null) }
@@ -109,7 +110,11 @@ internal fun NbgSkillsScreen(
         NbgSkillCuratorCard(summary = nbgBuildSkillCuratorSummary(snapshot))
       }
       item {
-        NbgLearnedSkillDraftQueueCard(queue = learnedDraftQueue)
+        NbgLearnedSkillDraftQueueCard(
+          queue = learnedDraftQueue,
+          busy = busyKey != null,
+          onReject = onRejectLearnedDraft,
+        )
       }
       item {
         NbgSkillBundlesCard(
@@ -253,7 +258,11 @@ internal fun NbgSkillsScreen(
 }
 
 @Composable
-private fun NbgLearnedSkillDraftQueueCard(queue: NbgLearnedSkillDraftQueue) {
+private fun NbgLearnedSkillDraftQueueCard(
+  queue: NbgLearnedSkillDraftQueue,
+  busy: Boolean,
+  onReject: (String) -> Unit,
+) {
   val visibleDrafts = queue.visibleEntries
   val hasDrafts = visibleDrafts.isNotEmpty()
   Surface(
@@ -318,7 +327,11 @@ private fun NbgLearnedSkillDraftQueueCard(queue: NbgLearnedSkillDraftQueue) {
       if (hasDrafts) {
         Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
           visibleDrafts.take(3).forEach { draft ->
-            NbgLearnedSkillDraftRow(draft)
+            NbgLearnedSkillDraftRow(
+              draft = draft,
+              busy = busy,
+              onReject = { onReject(draft.id) },
+            )
           }
         }
         if (visibleDrafts.size > 3) {
@@ -335,7 +348,11 @@ private fun NbgLearnedSkillDraftQueueCard(queue: NbgLearnedSkillDraftQueue) {
 }
 
 @Composable
-private fun NbgLearnedSkillDraftRow(draft: NbgLearnedSkillDraftQueueEntry) {
+private fun NbgLearnedSkillDraftRow(
+  draft: NbgLearnedSkillDraftQueueEntry,
+  busy: Boolean,
+  onReject: () -> Unit,
+) {
   val blocked = draft.status == NbgLearnedSkillDraftStatus.BlockedMissingEvidence || !draft.review.allowDraft
   val dangerous = draft.review.permissionTier == NbgPermissionRiskTier.Dangerous
   Surface(
@@ -411,6 +428,14 @@ private fun NbgLearnedSkillDraftRow(draft: NbgLearnedSkillDraftQueueEntry) {
           fontFamily = FontFamily.Monospace,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
+        )
+      }
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        NbgInlineActionButton(
+          label = "拒绝",
+          icon = Icons.Filled.Block,
+          enabled = !busy,
+          onClick = onReject,
         )
       }
     }

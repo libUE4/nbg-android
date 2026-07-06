@@ -50,6 +50,7 @@ class HanakoChatController(
     filesDir = appContext.filesDir,
     ubuntuRootHomeDir = ubuntuRootHomeDir(),
   )
+  private val learnedSkillDraftStore = NbgLearnedSkillDraftStore(appContext)
 
   private var serverInfo: HanakoServerInfo? = null
   private var webSocket: WebSocket? = null
@@ -251,7 +252,23 @@ class HanakoChatController(
 
   fun start() {
     restoreLatestCachedSessionOnce()
+    loadLearnedSkillDraftQueue()
     connect(allowLaunch = true)
+  }
+
+  fun loadLearnedSkillDraftQueue() {
+    _state.update { it.copy(learnedSkillDraftQueue = learnedSkillDraftStore.load()) }
+  }
+
+  fun rejectLearnedSkillDraft(id: String) {
+    val queue = learnedSkillDraftStore.reject(id)
+    _state.update {
+      it.copy(
+        learnedSkillDraftQueue = queue,
+        skillsError = null,
+        lastError = null,
+      )
+    }
   }
 
   fun stop() {

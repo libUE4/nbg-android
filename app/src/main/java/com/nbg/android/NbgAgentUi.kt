@@ -1365,6 +1365,7 @@ fun NbgAndroidShell(
         onUpdateBundle = { bundleId, name, skillNames -> hanako.updateSkillBundle(bundleId, name, skillNames) },
         onDeleteBundle = { hanako.deleteSkillBundle(it) },
         onSetExternalPaths = { hanako.setExternalSkillPaths(it) },
+        onRejectLearnedDraft = { hanako.rejectLearnedSkillDraft(it) },
       )
       NbgShellPage.Pets -> NbgPetsScreen(
         state = petUiState.petState,
