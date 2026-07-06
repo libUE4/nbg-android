@@ -67,7 +67,7 @@ Scope:
 - Improve session search result cards with source/type metadata. Implemented first increment: drawer rows now show match type, summary availability, pinned state, and cleaned result snippets.
 - Add session summary index or local summary sidecar. Implemented first increment: history cache now writes a local redacted `session-summary-index.json` sidecar with path, title, snippet, counts, and update time.
 - Add Skill draft UI that uses `nbgReviewLearnedSkillDraft()`. Implemented local review-queue increment: Android now has a learned Skill draft queue model, JSON parser, SharedPreferences-backed local store, startup restore, reject/hide action, Skills page counts/rows, missing-evidence display, dangerous-tier highlight, and no auto-install/enable path.
-- Add Skill Curator metrics: use count, last used, stale, pinned, archive/restore. Implemented first governance increment: Skills page now shows curator counts, review pressure, deletable count, trusted bundled count, and explicitly forbids auto-delete/auto-enable.
+- Add Skill Curator metrics: use count, last used, stale, pinned, archive/restore. Implemented Android local governance increment: Skills page now shows local use counts, archived count, most-used Skill, archive/restore controls, and explicitly forbids auto-delete/auto-enable.
 
 Acceptance:
 
@@ -81,8 +81,8 @@ Status: in progress.
 
 Scope:
 
-- Agents Team subtask panel with bounded templates, role progress, cancel/timeout states, and consolidated result card. Implemented first visibility increment: Agents page now surfaces bounded templates, tool scope, budgets, confirmation tier, cancellation, and consolidation requirement.
-- Expert Review UI for selecting two or more URL API models, showing separate reference outputs and a consolidated result. Implemented first readiness increment: URL API page now surfaces read-only Expert Review readiness from verified models.
+- Agents Team subtask panel with bounded templates, role progress, cancel/timeout states, and consolidated result card. Implemented run-state increment: Agents page now surfaces the current team task, child Agent rows, evidence refs, task/agent stop controls, and final summary card.
+- Expert Review UI for selecting two or more URL API models, showing separate reference outputs and a consolidated result. Implemented run increment: URL API page now supports verified-model selection, prompt entry, read-only multi-call execution, separate reference outputs, and local consolidated summary.
 - Checkpoint / rollback UX that exposes snapshot list and restore confirmation in a predictable place. Implemented first boundary increment: latest-turn rollback dialog now names the Checkpoint/Rollback boundary, history refresh, and restored-file count feedback.
 
 Acceptance:
@@ -99,9 +99,9 @@ Acceptance:
 | Local session search | Improved | Drawer search already calls `searchSessions()`; rows now render match type, summary state, pinned state, and cleaned snippets. |
 | Session summary index | Implemented foundation | Local redacted `session-summary-index.json` sidecar is written with cached history; future UI can surface it beyond drawer snippets. |
 | Skill draft UI | Improved | Skills page now accepts and renders a learned Skill draft queue with local persistence, startup restore, reject/hide, pending/blocked/dangerous counts, and row-level evidence status; backend sync remains next. |
-| Skill Curator | Implemented foundation | Skills page shows governance counts and no-auto-delete policy; usage metrics/archive remain next. |
-| Agents Team subtask panel | Implemented foundation | Agents page shows bounded templates, budgets, allowed tools, cancellation, and consolidation requirements. |
-| Expert Review UI | Implemented foundation | URL API page shows read-only readiness based on verified models; actual multi-call run UI remains next. |
+| Skill Curator | Improved | Skills page shows governance counts, usage metrics, local archive/restore, most-used Skill, and no-auto-delete/no-auto-enable policy. |
+| Agents Team subtask panel | Improved | Agents page shows current task status, child Agent progress, evidence refs, stop controls, bounded templates, and final summary. |
+| Expert Review UI | Improved | URL API page supports opt-in read-only multi-model review with separate outputs and local consolidated summary. |
 | Unified test script | Implemented | `scripts/nbg_test.sh`. |
 | Doctor diagnostics page | Implemented | Toolsets page includes capability health summary. |
 | Checkpoint / rollback UX | Improved foundation | Latest-turn rollback confirmation now explains current boundary and restored-file feedback; arbitrary snapshot list remains next. |
