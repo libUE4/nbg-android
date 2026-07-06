@@ -160,4 +160,27 @@ class NbgExpertReviewPolicyTest {
     assertEquals(2, review.modelCount)
     assertEquals(2, review.providerCount)
   }
+
+  @Test
+  fun expertReviewRunResultKeepsSeparateReferencesAndConsolidatesLocally() {
+    val models = listOf(
+      NbgExpertReviewModelRef("provider-a", "Provider A", "model-a", "Model A"),
+      NbgExpertReviewModelRef("provider-b", "Provider B", "model-b", "Model B"),
+    )
+    val result = nbgBuildExpertReviewRunResult(
+      prompt = "检查这个方案",
+      requestedModels = models,
+      references = listOf(
+        NbgExpertReviewReferenceOutput(models[0], ok = true, output = "A says yes"),
+        NbgExpertReviewReferenceOutput(models[1], ok = false, output = "", error = "timeout"),
+      ),
+    )
+
+    assertTrue(result.policyReview.allowStart)
+    assertEquals(2, result.references.size)
+    assertEquals(1, result.completedCount)
+    assertEquals(1, result.failedCount)
+    assertTrue(result.consolidatedSummary.contains("参考输出 1/2"))
+    assertTrue(result.consolidatedSummary.contains("失败 1"))
+  }
 }

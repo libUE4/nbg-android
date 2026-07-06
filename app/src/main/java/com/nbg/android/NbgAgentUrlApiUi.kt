@@ -250,11 +250,19 @@ internal fun NbgShellSubPage(
 @Composable
 internal fun NbgUrlApiScreen(
   entries: List<NbgStoredApi>,
+  expertReviewPrompt: String,
+  expertReviewSelectedKeys: Set<String>,
+  expertReviewRunning: Boolean,
+  expertReviewMessage: String,
+  expertReviewResult: NbgExpertReviewRunResult?,
   onBack: () -> Unit,
   onOpenDrawer: () -> Unit,
   onAdd: () -> Unit,
   onEdit: (NbgStoredApi) -> Unit,
   onDelete: (NbgStoredApi) -> Unit,
+  onExpertReviewPromptChange: (String) -> Unit,
+  onToggleExpertReviewModel: (NbgExpertReviewModelRef) -> Unit,
+  onRunExpertReview: () -> Unit,
 ) {
   Box(
     modifier = Modifier
@@ -320,7 +328,17 @@ internal fun NbgUrlApiScreen(
         verticalArrangement = Arrangement.spacedBy(10.dp),
       ) {
         item {
-          NbgExpertReviewReadinessCard(entries = entries)
+          NbgExpertReviewReadinessCard(
+            entries = entries,
+            prompt = expertReviewPrompt,
+            selectedKeys = expertReviewSelectedKeys,
+            running = expertReviewRunning,
+            message = expertReviewMessage,
+            result = expertReviewResult,
+            onPromptChange = onExpertReviewPromptChange,
+            onToggleModel = onToggleExpertReviewModel,
+            onRun = onRunExpertReview,
+          )
         }
         if (entries.isEmpty()) {
           item {
@@ -341,10 +359,21 @@ internal fun NbgUrlApiScreen(
 }
 
 @Composable
-private fun NbgExpertReviewReadinessCard(entries: List<NbgStoredApi>) {
+private fun NbgExpertReviewReadinessCard(
+  entries: List<NbgStoredApi>,
+  prompt: String,
+  selectedKeys: Set<String>,
+  running: Boolean,
+  message: String,
+  result: NbgExpertReviewRunResult?,
+  onPromptChange: (String) -> Unit,
+  onToggleModel: (NbgExpertReviewModelRef) -> Unit,
+  onRun: () -> Unit,
+) {
   val models = nbgExpertReviewModelRefs(entries)
+  val selected = models.filter { it.expertReviewKey in selectedKeys }.ifEmpty { models.take(2) }
   val review = nbgReviewExpertReviewRequest(
-    models = models,
+    models = selected,
     explicitUserTrigger = true,
   )
   Surface(
@@ -411,6 +440,133 @@ private fun NbgExpertReviewReadinessCard(entries: List<NbgStoredApi>) {
         fontSize = 11.sp,
         lineHeight = 15.sp,
       )
+      if (models.isNotEmpty()) {
+        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+          models.take(8).forEach { model ->
+            NbgExpertReviewModelPickRow(
+              model = model,
+              selected = model in selected,
+              enabled = !running,
+              onToggle = { onToggleModel(model) },
+            )
+          }
+        }
+      }
+      OutlinedTextField(
+        value = prompt,
+        onValueChange = onPromptChange,
+        label = { Text("评审问题") },
+        placeholder = { Text("输入需要多个模型只读评审的问题") },
+        minLines = 2,
+        maxLines = 5,
+        enabled = !running,
+        modifier = Modifier.fillMaxWidth(),
+      )
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        NbgInlineActionButton(
+          label = if (running) "评审中" else "运行评审",
+          icon = Icons.Filled.AutoAwesome,
+          primary = true,
+          enabled = review.allowStart && prompt.trim().isNotBlank() && !running,
+          onClick = onRun,
+        )
+        if (message.isNotBlank()) {
+          Text(
+            text = message,
+            color = if (message.contains("失败")) NbgAgentColors.StatusRed else NbgAgentColors.TextMuted,
+            fontSize = 11.sp,
+            lineHeight = 15.sp,
+            modifier = Modifier.weight(1f),
+          )
+        }
+      }
+      result?.let {
+        NbgExpertReviewResultPanel(result = it)
+      }
+    }
+  }
+}
+
+@Composable
+private fun NbgExpertReviewModelPickRow(
+  model: NbgExpertReviewModelRef,
+  selected: Boolean,
+  enabled: Boolean,
+  onToggle: () -> Unit,
+) {
+  Surface(
+    onClick = onToggle,
+    enabled = enabled,
+    modifier = Modifier.fillMaxWidth(),
+    shape = RoundedCornerShape(12.dp),
+    color = if (selected) NbgAgentColors.Selected else NbgAgentColors.SurfaceLow,
+    border = BorderStroke(1.dp, if (selected) NbgAgentColors.PrimarySoft else NbgAgentColors.InputBorder),
+  ) {
+    Row(
+      modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+      Icon(
+        imageVector = if (selected) Icons.Filled.CheckCircle else Icons.Filled.AutoAwesome,
+        contentDescription = null,
+        tint = if (selected) NbgAgentColors.Primary else NbgAgentColors.TextMuted,
+        modifier = Modifier.size(18.dp),
+      )
+      Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+          text = model.modelLabel,
+          color = NbgAgentColors.TextStrong,
+          fontSize = 12.sp,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+          text = model.providerName,
+          color = NbgAgentColors.TextMuted,
+          fontSize = 10.5.sp,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun NbgExpertReviewResultPanel(result: NbgExpertReviewRunResult) {
+  Surface(
+    modifier = Modifier.fillMaxWidth(),
+    shape = RoundedCornerShape(13.dp),
+    color = NbgAgentColors.SurfaceLow,
+    border = BorderStroke(1.dp, NbgAgentColors.InputBorder),
+  ) {
+    Column(
+      modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+      verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+      Text(
+        text = result.consolidatedSummary,
+        color = NbgAgentColors.TextStrong,
+        fontSize = 12.sp,
+        lineHeight = 17.sp,
+      )
+      result.references.forEach { reference ->
+        Text(
+          text = "${reference.model.modelLabel} · ${if (reference.ok) "完成" else "失败"}",
+          color = if (reference.ok) NbgAgentColors.Primary else NbgAgentColors.StatusRed,
+          fontSize = 11.sp,
+          fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+          text = if (reference.ok) reference.output else reference.error,
+          color = NbgAgentColors.TextMuted,
+          fontSize = 10.5.sp,
+          lineHeight = 15.sp,
+          maxLines = 5,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
     }
   }
 }

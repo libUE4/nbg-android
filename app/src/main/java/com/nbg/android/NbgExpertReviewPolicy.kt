@@ -24,6 +24,26 @@ internal data class NbgExpertReviewPolicyReview(
   val reason: String,
 )
 
+internal data class NbgExpertReviewReferenceOutput(
+  val model: NbgExpertReviewModelRef,
+  val ok: Boolean,
+  val output: String,
+  val error: String = "",
+)
+
+internal data class NbgExpertReviewRunResult(
+  val policyReview: NbgExpertReviewPolicyReview,
+  val prompt: String,
+  val references: List<NbgExpertReviewReferenceOutput>,
+  val consolidatedSummary: String,
+) {
+  val completedCount: Int
+    get() = references.count { it.ok && it.output.isNotBlank() }
+
+  val failedCount: Int
+    get() = references.count { !it.ok }
+}
+
 internal fun nbgExpertReviewModelRef(entry: NbgStoredApi, model: NbgApiModel): NbgExpertReviewModelRef =
   NbgExpertReviewModelRef(
     providerId = nbgUrlApiProviderId(entry.id),
@@ -75,4 +95,35 @@ internal fun nbgReviewExpertReviewRequest(
       else -> "允许启动只读专家评审；参考输出分开展示，最终结果需要汇总。"
     },
   )
+}
+
+internal fun nbgBuildExpertReviewRunResult(
+  prompt: String,
+  requestedModels: List<NbgExpertReviewModelRef>,
+  references: List<NbgExpertReviewReferenceOutput>,
+): NbgExpertReviewRunResult {
+  val policy = nbgReviewExpertReviewRequest(
+    models = requestedModels,
+    explicitUserTrigger = true,
+  )
+  return NbgExpertReviewRunResult(
+    policyReview = policy,
+    prompt = prompt.trim().take(2_000),
+    references = references,
+    consolidatedSummary = nbgConsolidateExpertReviewReferences(references),
+  )
+}
+
+private fun nbgConsolidateExpertReviewReferences(references: List<NbgExpertReviewReferenceOutput>): String {
+  val ok = references.filter { it.ok && it.output.isNotBlank() }
+  val failed = references.filterNot { it.ok }
+  return buildString {
+    append("参考输出 ${ok.size}/${references.size}")
+    if (failed.isNotEmpty()) append("，失败 ${failed.size}")
+    if (ok.isNotEmpty()) {
+      append("。请优先比较各模型共同结论、冲突点和可执行建议。")
+    } else {
+      append("。没有可用参考输出，请检查 URL API 模型配置。")
+    }
+  }
 }

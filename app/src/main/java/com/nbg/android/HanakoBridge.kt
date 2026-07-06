@@ -2110,6 +2110,8 @@ data class HanakoChatState(
   val memoryError: String? = null,
   val memoryBusyKey: String? = null,
   val skillsSnapshot: HanakoSkillsSnapshot = HanakoSkillsSnapshot(),
+  val rawSkillsSnapshot: HanakoSkillsSnapshot = HanakoSkillsSnapshot(),
+  val skillCuratorMetadata: NbgSkillCuratorMetadata = NbgSkillCuratorMetadata(),
   val learnedSkillDraftQueue: NbgLearnedSkillDraftQueue = NbgLearnedSkillDraftQueue(),
   val skillsLoading: Boolean = false,
   val skillsError: String? = null,

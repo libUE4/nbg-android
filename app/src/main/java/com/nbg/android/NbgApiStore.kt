@@ -52,6 +52,12 @@ data class NbgSkillDescriptionTranslateResult(
   val message: String,
 )
 
+data class NbgUrlApiTextGenerationResult(
+  val ok: Boolean,
+  val text: String,
+  val message: String,
+)
+
 internal interface NbgApiKeySecretStore {
   fun loadApiKey(entryId: String): String?
   fun saveApiKey(entryId: String, apiKey: String)
@@ -440,6 +446,71 @@ class NbgUpstreamApiClient {
         }
       }
       NbgSkillDescriptionTranslateResult(emptyMap(), "翻译失败：$lastError")
+    }
+
+  suspend fun generateReadOnlyText(
+    entry: NbgStoredApi,
+    model: NbgApiModel,
+    prompt: String,
+    systemPrompt: String = "你是只读专家评审模型。不要调用工具，不要要求写文件，只输出评审意见。",
+  ): NbgUrlApiTextGenerationResult =
+    withContext(Dispatchers.IO) {
+      val normalized = nbgNormalizeApiBaseUrl(entry.baseUrl)
+      val cleanPrompt = prompt.trim().take(8_000)
+      if (normalized.isBlank() || entry.apiKey.isBlank() || model.id.isBlank() || cleanPrompt.isBlank()) {
+        return@withContext NbgUrlApiTextGenerationResult(false, "", "没有可用的 URL API 模型或评审问题")
+      }
+      val provider = nbgHanakoProviderForUrlApi(normalized, model.id)
+      val candidates = if (provider == "anthropic") {
+        listOf(nbgApiEndpoint(normalized, "/v1/messages"), nbgApiEndpoint(normalized, "/messages")).distinct()
+      } else {
+        listOf(nbgApiEndpoint(normalized, "/v1/chat/completions"), nbgApiEndpoint(normalized, "/chat/completions")).distinct()
+      }
+      var lastError = ""
+      for (url in candidates) {
+        val body = if (provider == "anthropic") {
+          JSONObject()
+            .put("model", model.id)
+            .put("max_tokens", 2200)
+            .put("temperature", 0)
+            .put("system", systemPrompt)
+            .put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", cleanPrompt)))
+        } else {
+          JSONObject()
+            .put("model", model.id)
+            .put(
+              "messages",
+              JSONArray()
+                .put(JSONObject().put("role", "system").put("content", systemPrompt))
+                .put(JSONObject().put("role", "user").put("content", cleanPrompt)),
+            )
+            .put("temperature", 0)
+            .put("max_tokens", 2200)
+            .put("stream", false)
+        }
+        val request = Request.Builder()
+          .url(url)
+          .addApiHeaders(entry.apiKey)
+          .post(body.toString().toRequestBody(JSON))
+          .build()
+        runCatching {
+          client.newCall(request).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+              lastError = "HTTP ${response.code}: ${nbgCompactApiError(raw)}"
+              return@use
+            }
+            val text = nbgParseProbeText(raw, if (provider == "anthropic") "Anthropic" else "OpenAI")
+            if (text.isNotBlank()) {
+              return@withContext NbgUrlApiTextGenerationResult(true, text.take(12_000), "完成")
+            }
+            lastError = "模型没有返回文本"
+          }
+        }.onFailure { error ->
+          lastError = error.message.orEmpty().ifBlank { error::class.java.simpleName }
+        }
+      }
+      NbgUrlApiTextGenerationResult(false, "", "生成失败：$lastError")
     }
 
   private fun Request.Builder.addApiHeaders(apiKey: String): Request.Builder =

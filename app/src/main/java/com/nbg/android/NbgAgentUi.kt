@@ -207,6 +207,7 @@ fun NbgAndroidShell(
   val savedApis = urlApiEntriesState.entries
   val savedApisLoaded = urlApiEntriesState.loaded
   val apiEditor = rememberNbgAgentApiEditorState()
+  val expertReviewState = remember { NbgAgentExpertReviewState() }
   val skillTranslationState = remember { NbgAgentSkillTranslationState() }
   val petUiState = remember { NbgAgentPetState(petStore.loadState()) }
   val messageState = remember { NbgAgentMessageState() }
@@ -946,6 +947,54 @@ fun NbgAndroidShell(
       skillTranslationState.finish(skill.name)
     }
   }
+  fun runExpertReview() {
+    val models = expertReviewState.selectedModels(savedApis)
+    val prompt = expertReviewState.prompt.trim()
+    val review = nbgReviewExpertReviewRequest(models, explicitUserTrigger = true)
+    if (!review.allowStart || prompt.isBlank()) {
+      expertReviewState.message = if (prompt.isBlank()) "请输入评审问题" else review.reason
+      return
+    }
+    val requestSerial = expertReviewState.nextRequestSerial()
+    expertReviewState.running = true
+    expertReviewState.message = "正在调用 ${models.size} 个模型..."
+    scope.launch {
+      val references = models.map { modelRef ->
+        val entry = savedApis.firstOrNull { nbgUrlApiProviderId(it.id) == modelRef.providerId }
+        val model = entry?.models?.firstOrNull { it.id == modelRef.modelId }
+        if (entry == null || model == null) {
+          NbgExpertReviewReferenceOutput(modelRef, ok = false, output = "", error = "模型配置已不存在")
+        } else {
+          runCatching {
+            apiClient.generateReadOnlyText(
+              entry = entry,
+              model = model,
+              prompt = prompt,
+            )
+          }.fold(
+            onSuccess = { result ->
+              NbgExpertReviewReferenceOutput(
+                model = modelRef,
+                ok = result.ok,
+                output = result.text,
+                error = if (result.ok) "" else result.message,
+              )
+            },
+            onFailure = { error ->
+              NbgExpertReviewReferenceOutput(
+                model = modelRef,
+                ok = false,
+                output = "",
+                error = error.message.orEmpty().ifBlank { error::class.java.simpleName },
+              )
+            },
+          )
+        }
+      }
+      if (!expertReviewState.isCurrent(requestSerial)) return@launch
+      expertReviewState.applyResult(nbgBuildExpertReviewRunResult(prompt, models, references))
+    }
+  }
   LaunchedEffect(savedApis, selectedUrlApiModel) {
     val selected = selectedUrlApiModel ?: return@LaunchedEffect
     val entry = savedApis.firstOrNull { nbgUrlApiProviderId(it.id) == selected.providerId }
@@ -992,6 +1041,9 @@ fun NbgAndroidShell(
   }
   LaunchedEffect(savedApisLoaded, savedApis) {
     if (savedApisLoaded) hanako.syncUrlApiProviders(savedApis)
+  }
+  LaunchedEffect(savedApis) {
+    expertReviewState.syncAvailableModels(savedApis)
   }
   LaunchedEffect(agentModelConfig, selectedUrlApiModel, chatPreferencesLoaded, savedApisLoaded, chatPreferences.hasModel) {
     if (chatPreferencesLoaded && savedApisLoaded && selectedUrlApiModel == null && !chatPreferences.hasModel) {
@@ -1346,6 +1398,8 @@ fun NbgAndroidShell(
       )
       NbgShellPage.Skills -> NbgSkillsScreen(
         snapshot = hanakoState.skillsSnapshot,
+        rawSnapshot = hanakoState.rawSkillsSnapshot,
+        skillCuratorMetadata = hanakoState.skillCuratorMetadata,
         learnedDraftQueue = hanakoState.learnedSkillDraftQueue,
         loading = hanakoState.skillsLoading,
         error = hanakoState.skillsError,
@@ -1366,6 +1420,8 @@ fun NbgAndroidShell(
         onDeleteBundle = { hanako.deleteSkillBundle(it) },
         onSetExternalPaths = { hanako.setExternalSkillPaths(it) },
         onRejectLearnedDraft = { hanako.rejectLearnedSkillDraft(it) },
+        onArchiveSkill = { hanako.archiveSkill(it) },
+        onRestoreSkill = { hanako.restoreArchivedSkill(it) },
       )
       NbgShellPage.Pets -> NbgPetsScreen(
         state = petUiState.petState,
@@ -1390,6 +1446,11 @@ fun NbgAndroidShell(
       )
       NbgShellPage.UrlApi -> NbgUrlApiScreen(
         entries = savedApis,
+        expertReviewPrompt = expertReviewState.prompt,
+        expertReviewSelectedKeys = expertReviewState.selectedModelKeys,
+        expertReviewRunning = expertReviewState.running,
+        expertReviewMessage = expertReviewState.message,
+        expertReviewResult = expertReviewState.result,
         onBack = { shellState.showChat() },
         onOpenDrawer = { scope.launch { drawerState.open() } },
         onAdd = { openApiEditor() },
@@ -1402,6 +1463,9 @@ fun NbgAndroidShell(
             clearPreferredModel()
           }
         },
+        onExpertReviewPromptChange = { expertReviewState.prompt = it },
+        onToggleExpertReviewModel = { expertReviewState.toggleModel(it) },
+        onRunExpertReview = { runExpertReview() },
       )
       NbgShellPage.ToolsetsDoctor -> NbgToolsetsDoctorScreen(
         preferences = chatPreferences,

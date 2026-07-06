@@ -51,6 +51,7 @@ class HanakoChatController(
     ubuntuRootHomeDir = ubuntuRootHomeDir(),
   )
   private val learnedSkillDraftStore = NbgLearnedSkillDraftStore(appContext)
+  private val skillCuratorStore = NbgSkillCuratorStore(appContext)
 
   private var serverInfo: HanakoServerInfo? = null
   private var webSocket: WebSocket? = null
@@ -253,6 +254,7 @@ class HanakoChatController(
   fun start() {
     restoreLatestCachedSessionOnce()
     loadLearnedSkillDraftQueue()
+    loadSkillCuratorMetadata()
     connect(allowLaunch = true)
   }
 
@@ -268,6 +270,13 @@ class HanakoChatController(
         skillsError = null,
         lastError = null,
       )
+    }
+  }
+
+  fun loadSkillCuratorMetadata() {
+    val metadata = skillCuratorStore.load()
+    _state.update { state ->
+      state.withSkillCuratorMetadata(metadata)
     }
   }
 
@@ -1419,8 +1428,7 @@ class HanakoChatController(
         loadSkillsWithRetry(agentId)
       }.onSuccess { snapshot ->
         _state.update {
-          it.copy(
-            skillsSnapshot = snapshot,
+          it.withSkillSnapshot(snapshot).copy(
             skillsLoading = false,
             skillsBusyKey = null,
             skillsError = null,
@@ -1487,6 +1495,7 @@ class HanakoChatController(
   fun setSkillEnabled(skillName: String, enabled: Boolean, agentId: String = HANA_DEFAULT_MCP_AGENT_ID) {
     val name = skillName.trim()
     if (name.isBlank()) return
+    recordSkillCuratorUse(name)
     runSkillsMutation(busyKey = "skills:toggle:$name", agentId = agentId) { info ->
       val snapshot = http.getSkills(info, agentId)
       val enabledNames = snapshot.visibleSkills
@@ -1502,8 +1511,38 @@ class HanakoChatController(
   fun deleteSkill(skillName: String, agentId: String = HANA_DEFAULT_MCP_AGENT_ID) {
     val name = skillName.trim()
     if (name.isBlank()) return
+    recordSkillCuratorUse(name)
     runSkillsMutation(busyKey = "skills:delete:$name", agentId = agentId) { info ->
       http.deleteSkill(info, name, agentId)
+    }
+  }
+
+  fun archiveSkill(skillName: String) {
+    val name = skillName.trim()
+    if (name.isBlank()) return
+    val active = _state.value.rawSkillsSnapshot.visibleSkills.firstOrNull { it.name == name }?.enabled == true
+    if (active) {
+      _state.update { it.copy(skillsError = "请先禁用 Skill，再归档本地视图。") }
+      return
+    }
+    val metadata = skillCuratorStore.archive(name, reason = "user_archive")
+    _state.update { state ->
+      state.withSkillCuratorMetadata(metadata).copy(
+        skillsError = null,
+        lastError = null,
+      )
+    }
+  }
+
+  fun restoreArchivedSkill(skillName: String) {
+    val name = skillName.trim()
+    if (name.isBlank()) return
+    val metadata = skillCuratorStore.restore(name)
+    _state.update { state ->
+      state.withSkillCuratorMetadata(metadata).copy(
+        skillsError = null,
+        lastError = null,
+      )
     }
   }
 
@@ -1584,8 +1623,7 @@ class HanakoChatController(
         }
       }.onSuccess { snapshot ->
         _state.update {
-          it.copy(
-            skillsSnapshot = snapshot,
+          it.withSkillSnapshot(snapshot).copy(
             skillsLoading = false,
             skillsBusyKey = null,
             skillsError = null,
@@ -1611,6 +1649,11 @@ class HanakoChatController(
     return withLocalHanakoRetry(info) { activeInfo ->
       withContext(Dispatchers.IO) { http.getSkills(activeInfo, agentId) }
     }
+  }
+
+  private fun recordSkillCuratorUse(skillName: String) {
+    val metadata = skillCuratorStore.recordUse(skillName)
+    _state.update { it.withSkillCuratorMetadata(metadata) }
   }
 
   private fun skillsUserError(error: Throwable): String {
@@ -3524,3 +3567,15 @@ class HanakoChatController(
     const val BACKGROUND_WARMUP_DELAY_MS = 120L
   }
 }
+
+private fun HanakoChatState.withSkillSnapshot(snapshot: HanakoSkillsSnapshot): HanakoChatState =
+  copy(
+    rawSkillsSnapshot = snapshot,
+    skillsSnapshot = nbgApplySkillCuratorMetadata(snapshot, skillCuratorMetadata),
+  )
+
+private fun HanakoChatState.withSkillCuratorMetadata(metadata: NbgSkillCuratorMetadata): HanakoChatState =
+  copy(
+    skillCuratorMetadata = metadata,
+    skillsSnapshot = nbgApplySkillCuratorMetadata(rawSkillsSnapshot, metadata),
+  )

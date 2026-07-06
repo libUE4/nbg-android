@@ -20,9 +20,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
@@ -51,6 +53,8 @@ import androidx.compose.ui.unit.sp
 @Composable
 internal fun NbgSkillsScreen(
   snapshot: HanakoSkillsSnapshot,
+  rawSnapshot: HanakoSkillsSnapshot = snapshot,
+  skillCuratorMetadata: NbgSkillCuratorMetadata = NbgSkillCuratorMetadata(),
   learnedDraftQueue: NbgLearnedSkillDraftQueue = NbgLearnedSkillDraftQueue(),
   loading: Boolean,
   error: String?,
@@ -71,9 +75,12 @@ internal fun NbgSkillsScreen(
   onDeleteBundle: (String) -> Unit,
   onSetExternalPaths: (List<String>) -> Unit,
   onRejectLearnedDraft: (String) -> Unit = {},
+  onArchiveSkill: (String) -> Unit = {},
+  onRestoreSkill: (String) -> Unit = {},
 ) {
   var addOpen by remember { mutableStateOf(false) }
   var deleteTarget by remember { mutableStateOf<HanakoSkillSummary?>(null) }
+  var archiveTarget by remember { mutableStateOf<HanakoSkillSummary?>(null) }
   var detailTarget by remember { mutableStateOf<HanakoSkillSummary?>(null) }
   var createBundleOpen by remember { mutableStateOf(false) }
   var editBundleTarget by remember { mutableStateOf<HanakoSkillBundle?>(null) }
@@ -82,6 +89,9 @@ internal fun NbgSkillsScreen(
   var enableReviewTarget by remember { mutableStateOf<HanakoSkillSummary?>(null) }
   var translatedSkillNames by remember { mutableStateOf<Set<String>>(emptySet()) }
   val skills = snapshot.visibleSkills
+  val archivedSkills = remember(rawSnapshot, skillCuratorMetadata) {
+    nbgSkillCuratorArchivedSkills(rawSnapshot, skillCuratorMetadata)
+  }
   NbgShellSubPage(
     title = "Skills",
     subtitle = nbgSkillsSubtitle(snapshot, loading),
@@ -107,7 +117,12 @@ internal fun NbgSkillsScreen(
         )
       }
       item {
-        NbgSkillCuratorCard(summary = nbgBuildSkillCuratorSummary(snapshot))
+        NbgSkillCuratorCard(
+          summary = nbgBuildSkillCuratorSummary(rawSnapshot, skillCuratorMetadata),
+          archivedSkills = archivedSkills,
+          busy = busyKey != null,
+          onRestore = onRestoreSkill,
+        )
       }
       item {
         NbgLearnedSkillDraftQueueCard(
@@ -163,6 +178,7 @@ internal fun NbgSkillsScreen(
               }
             },
             onOpenDetail = { detailTarget = skill },
+            onArchive = { archiveTarget = skill },
             onDelete = { deleteTarget = skill },
           )
         }
@@ -206,6 +222,17 @@ internal fun NbgSkillsScreen(
       onConfirm = {
         deleteTarget = null
         onDelete(skill.name)
+      },
+    )
+  }
+  archiveTarget?.let { skill ->
+    NbgSkillArchiveDialog(
+      skill = skill,
+      busy = busyKey != null,
+      onDismiss = { archiveTarget = null },
+      onConfirm = {
+        archiveTarget = null
+        onArchiveSkill(skill.name)
       },
     )
   }
@@ -443,7 +470,12 @@ private fun NbgLearnedSkillDraftRow(
 }
 
 @Composable
-private fun NbgSkillCuratorCard(summary: NbgSkillCuratorSummary) {
+private fun NbgSkillCuratorCard(
+  summary: NbgSkillCuratorSummary,
+  archivedSkills: List<NbgSkillCuratorArchivedSkill>,
+  busy: Boolean,
+  onRestore: (String) -> Unit,
+) {
   Surface(
     modifier = Modifier.fillMaxWidth(),
     shape = RoundedCornerShape(16.dp),
@@ -483,14 +515,85 @@ private fun NbgSkillCuratorCard(summary: NbgSkillCuratorSummary) {
       }
       Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
         NbgSkillCuratorMetric("需复核", summary.requiresReviewCount, Modifier.weight(1f))
-        NbgSkillCuratorMetric("可删除", summary.deletableCount, Modifier.weight(1f))
-        NbgSkillCuratorMetric("可信内置", summary.bundledTrustedCount, Modifier.weight(1f))
+        NbgSkillCuratorMetric("已归档", summary.archivedCount, Modifier.weight(1f))
+        NbgSkillCuratorMetric("使用记录", summary.usageEventCount, Modifier.weight(1f))
+      }
+      if (summary.mostUsedSkillName.isNotBlank()) {
+        Text(
+          text = "最常用：${summary.mostUsedSkillName}",
+          color = NbgAgentColors.TextMuted,
+          fontSize = 11.sp,
+          lineHeight = 15.sp,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
+      if (archivedSkills.isNotEmpty()) {
+        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+          archivedSkills.take(3).forEach { archived ->
+            NbgArchivedSkillRow(
+              archived = archived,
+              busy = busy,
+              onRestore = { onRestore(archived.skillName) },
+            )
+          }
+        }
       }
       Text(
-        text = "Curator 只做治理提示；不会自动删除或启用 Skill。",
+        text = "Curator 只做治理提示和本地归档；不会自动删除、安装或启用 Skill。",
         color = NbgAgentColors.TextMuted,
         fontSize = 11.sp,
         lineHeight = 15.sp,
+      )
+    }
+  }
+}
+
+@Composable
+private fun NbgArchivedSkillRow(
+  archived: NbgSkillCuratorArchivedSkill,
+  busy: Boolean,
+  onRestore: () -> Unit,
+) {
+  Surface(
+    modifier = Modifier.fillMaxWidth(),
+    shape = RoundedCornerShape(12.dp),
+    color = NbgAgentColors.SurfaceLow,
+    border = BorderStroke(1.dp, NbgAgentColors.InputBorder),
+  ) {
+    Row(
+      modifier = Modifier.padding(horizontal = 9.dp, vertical = 8.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+      Icon(
+        imageVector = Icons.Filled.Archive,
+        contentDescription = null,
+        tint = NbgAgentColors.TextMuted,
+        modifier = Modifier.size(17.dp),
+      )
+      Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+          text = archived.skillName,
+          color = NbgAgentColors.TextStrong,
+          fontSize = 12.sp,
+          fontWeight = FontWeight.SemiBold,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+          text = "已归档 · ${archived.useCount} 次使用记录",
+          color = NbgAgentColors.TextMuted,
+          fontSize = 10.5.sp,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
+      NbgInlineActionButton(
+        label = "恢复",
+        icon = Icons.Filled.Restore,
+        enabled = !busy,
+        onClick = onRestore,
       )
     }
   }
@@ -1214,6 +1317,39 @@ private fun NbgSkillDeleteDialog(
 }
 
 @Composable
+private fun NbgSkillArchiveDialog(
+  skill: HanakoSkillSummary,
+  busy: Boolean,
+  onDismiss: () -> Unit,
+  onConfirm: () -> Unit,
+) {
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    containerColor = NbgAgentColors.Drawer,
+    title = { Text("归档 Skill", color = NbgAgentColors.TextStrong, fontSize = 18.sp) },
+    text = {
+      Text(
+        text = "归档 ${skill.name} 只会从 Android Skills 列表隐藏它，不会删除文件，也不会改 HanakoPro 的 Skill 目录。需要重新使用时可以从 Curator 恢复。",
+        color = NbgAgentColors.TextMuted,
+        fontSize = 13.sp,
+        lineHeight = 19.sp,
+      )
+    },
+    confirmButton = {
+      NbgDialogAction(
+        label = if (busy) "处理中" else "归档",
+        primary = true,
+        enabled = !busy && !skill.enabled,
+        onClick = onConfirm,
+      )
+    },
+    dismissButton = {
+      NbgDialogAction(label = "取消", enabled = !busy, onClick = onDismiss)
+    },
+  )
+}
+
+@Composable
 private fun NbgSkillDetailDialog(
   skill: HanakoSkillSummary,
   translated: Boolean,
@@ -1311,6 +1447,7 @@ private fun NbgSkillRow(
   onToggleTranslation: () -> Unit,
   onSetEnabled: (String, Boolean) -> Unit,
   onOpenDetail: () -> Unit,
+  onArchive: () -> Unit,
   onDelete: () -> Unit,
 ) {
   val busy = busyKey == "skills:toggle:${skill.name}" || busyKey == "skills:delete:${skill.name}"
@@ -1412,6 +1549,12 @@ private fun NbgSkillRow(
           onClick = onToggleTranslation,
         )
         if (skill.deletable) {
+          NbgInlineActionButton(
+            label = "归档",
+            icon = Icons.Filled.Archive,
+            enabled = busyKey == null && !skill.enabled,
+            onClick = onArchive,
+          )
           NbgInlineActionButton(
             label = "删除",
             icon = Icons.Filled.Delete,
