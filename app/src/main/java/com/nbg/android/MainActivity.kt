@@ -2,6 +2,7 @@ package com.nbg.android
 
 import android.animation.ValueAnimator
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.view.KeyEvent
@@ -100,19 +101,45 @@ import android.graphics.Color as AndroidColor
 import com.termux.terminal.TerminalSession as TermuxTerminalSession
 
 class MainActivity : ComponentActivity() {
+  private var gatewayInboxRefreshToken by mutableStateOf(0L)
+
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
-    val initialPageName = intent?.getStringExtra("nbg_start_page")
+    val initialPageName = initialPageNameForIntent(intent)
     HanakoBackgroundWarmup.start(this)
     HanakoForegroundServiceController.start(this)
     setContent {
-      NbgAndroidApp(initialPageName = initialPageName)
+      NbgAndroidApp(
+        initialPageName = initialPageName,
+        gatewayInboxRefreshToken = gatewayInboxRefreshToken,
+      )
     }
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    if (nbgRecordGatewayShareIntent(this, intent) != null) {
+      gatewayInboxRefreshToken = System.currentTimeMillis()
+    }
+  }
+
+  private fun initialPageNameForIntent(intent: Intent?): String? {
+    val explicit = intent?.getStringExtra(NBG_START_PAGE_EXTRA)
+    if (!explicit.isNullOrBlank()) return explicit
+    if (nbgRecordGatewayShareIntent(this, intent) != null) {
+      gatewayInboxRefreshToken = System.currentTimeMillis()
+      return "learning"
+    }
+    return null
   }
 }
 
 @Composable
-private fun NbgAndroidApp(initialPageName: String? = null) {
+private fun NbgAndroidApp(
+  initialPageName: String? = null,
+  gatewayInboxRefreshToken: Long = 0L,
+) {
   val context = LocalContext.current
   var appearance by remember(context) { mutableStateOf(NbgChatPreferenceStore(context).load()) }
   LaunchedEffect(context) {
@@ -136,6 +163,7 @@ private fun NbgAndroidApp(initialPageName: String? = null) {
       NbgAndroidShell(
         onAppearanceChanged = { next -> appearance = next },
         initialPageName = initialPageName,
+        gatewayInboxRefreshToken = gatewayInboxRefreshToken,
       ) { onBack ->
         TerminalScreen(
           onBack = onBack,

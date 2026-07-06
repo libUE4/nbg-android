@@ -29,8 +29,8 @@ data class NbgLearningSettings(
   val autonomousLearningEnabled: Boolean = true,
   val autoSaveMemoryEnabled: Boolean = true,
   val autoUpdateUserProfileEnabled: Boolean = true,
-  val autoInstallSkillsEnabled: Boolean = false,
-  val autoEnableSkillsEnabled: Boolean = false,
+  val autoInstallSkillsEnabled: Boolean = true,
+  val autoEnableSkillsEnabled: Boolean = true,
   val dangerousLearningBlocked: Boolean = true,
   val auditRetention: String = "permanent",
 )

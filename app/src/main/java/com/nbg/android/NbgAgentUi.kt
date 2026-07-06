@@ -177,6 +177,7 @@ import me.rerere.hugeicons.stroke.Tools
 fun NbgAndroidShell(
   onAppearanceChanged: (NbgChatPreferences) -> Unit = {},
   initialPageName: String? = null,
+  gatewayInboxRefreshToken: Long = 0L,
   terminalContent: @Composable (onBack: () -> Unit) -> Unit,
 ) {
   val initialPage = remember(initialPageName) { nbgInitialShellPage(initialPageName) }
@@ -878,6 +879,12 @@ fun NbgAndroidShell(
       hanako.loadSkills()
     }
   }
+  LaunchedEffect(gatewayInboxRefreshToken) {
+    if (gatewayInboxRefreshToken > 0L) {
+      hanako.loadGatewayInboxState()
+      shellState.showPage(NbgShellPage.Learning)
+    }
+  }
   val conversations = remember(hanakoState.sessions) {
     hanakoState.sessions.map {
       NbgAgentConversation(
@@ -1208,6 +1215,24 @@ fun NbgAndroidShell(
     }
   }
 
+  fun shareTrajectoryExport(bundle: NbgTrajectoryExportBundle?) {
+    val exportBundle = bundle ?: run {
+      Toast.makeText(context, "请先生成轨迹导出", Toast.LENGTH_SHORT).show()
+      return
+    }
+    if (!exportBundle.review.allowExport) {
+      Toast.makeText(context, "轨迹导出未通过本地脱敏检查", Toast.LENGTH_SHORT).show()
+      return
+    }
+    runCatching {
+      val sendIntent = nbgBuildTrajectoryExportShareIntent(context, exportBundle)
+      context.startActivity(Intent.createChooser(sendIntent, "分享轨迹导出"))
+    }.onFailure { error ->
+      val message = if (error is ActivityNotFoundException) "没有可用的分享目标" else "轨迹导出分享失败"
+      Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+    }
+  }
+
   ModalNavigationDrawer(
     drawerState = drawerState,
     drawerContent = {
@@ -1433,6 +1458,7 @@ fun NbgAndroidShell(
         onRunScheduleNow = { hanako.runScheduledAutomationNow(it) },
         onArchiveGatewayMessage = { hanako.archiveGatewayInboxMessage(it) },
         onBuildTrajectoryExport = { hanako.buildTrajectoryExportForCurrentSession() },
+        onShareTrajectoryExport = { shareTrajectoryExport(hanakoState.trajectoryExportBundle) },
         onClearTrajectoryExport = { hanako.clearTrajectoryExport() },
         onBuildRecall = { hanako.buildLearningRecallForCurrentSession() },
         onApproveEvent = { hanako.approveLearningEvent(it) },

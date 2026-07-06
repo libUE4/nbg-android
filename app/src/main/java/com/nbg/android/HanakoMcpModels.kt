@@ -26,6 +26,20 @@ data class HanakoMcpTool(
     get() = title.ifBlank { name }
 }
 
+enum class NbgMcpToolCategory(val wireName: String, val label: String) {
+  WebSearch("web_search", "Web Search"),
+  Browser("browser", "Browser"),
+  Vision("vision", "Vision"),
+  Image("image", "Image"),
+  Speech("speech", "Speech"),
+  Media("media", "Media"),
+  Memory("memory", "Memory"),
+  File("file", "File"),
+  Terminal("terminal", "Terminal"),
+  Data("data", "Data"),
+  Other("other", "Other"),
+}
+
 data class HanakoMcpConnector(
   val id: String,
   val name: String,
@@ -58,6 +72,15 @@ data class HanakoMcpConnector(
       registryUrl.isNotBlank() -> registryUrl
       else -> id
     }
+
+  val toolCategories: List<NbgMcpToolCategory>
+    get() = tools
+      .map { tool ->
+        nbgMcpToolCategory(tool).takeIf { it != NbgMcpToolCategory.Other }
+          ?: nbgMcpToolCategory(tool, connectorHint = listOf(name, description, target).joinToString(" "))
+      }
+      .distinct()
+      .sortedBy { it.ordinal }
 }
 
 data class HanakoMcpConnectorInput(
@@ -126,6 +149,38 @@ internal fun nbgMcpConnectorId(raw: String): String =
     .trim('-')
     .take(48)
     .ifBlank { "mcp-connector" }
+
+internal fun nbgMcpToolCategory(
+  tool: HanakoMcpTool,
+  connectorHint: String = "",
+): NbgMcpToolCategory {
+  val text = listOf(tool.name, tool.title, tool.description, connectorHint)
+    .joinToString(" ")
+    .lowercase()
+  return when {
+    text.hasAny("web_search", "web search", "search_web", "firecrawl", "tavily", "serp", "google_search", "brave_search") ->
+      NbgMcpToolCategory.WebSearch
+    text.hasAny("browser", "browse", "playwright", "selenium", "navigate", "page_", "click", "screenshot") ->
+      NbgMcpToolCategory.Browser
+    text.hasAny("vision", "ocr", "image_to_text", "describe_image", "screen", "visual") ->
+      NbgMcpToolCategory.Vision
+    text.hasAny("image", "img", "generate_image", "stable_diffusion", "fal", "dalle", "midjourney") ->
+      NbgMcpToolCategory.Image
+    text.hasAny("speech", "audio", "voice", "transcribe", "tts", "stt", "elevenlabs", "whisper") ->
+      NbgMcpToolCategory.Speech
+    text.hasAny("video", "media", "youtube", "ffmpeg", "render", "caption") ->
+      NbgMcpToolCategory.Media
+    text.hasAny("memory", "mem0", "honcho", "cognee", "knowledge", "profile", "recall") ->
+      NbgMcpToolCategory.Memory
+    text.hasAny("file", "read_file", "write_file", "filesystem", "directory", "path") ->
+      NbgMcpToolCategory.File
+    text.hasAny("terminal", "shell", "command", "exec", "bash", "process") ->
+      NbgMcpToolCategory.Terminal
+    text.hasAny("sql", "database", "query", "table", "json", "api", "http") ->
+      NbgMcpToolCategory.Data
+    else -> NbgMcpToolCategory.Other
+  }
+}
 
 private fun JSONArray.toMcpConnectors(): List<HanakoMcpConnector> =
   buildList {
@@ -232,3 +287,6 @@ private fun JSONObject?.jsonObjectSize(): Int {
   }
   return count
 }
+
+private fun String.hasAny(vararg needles: String): Boolean =
+  needles.any { contains(it) }

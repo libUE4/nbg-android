@@ -847,7 +847,8 @@ class AndroidManifestBehaviorTest {
     assertFalse(mainActivity.contains("private val NbgMaterialColorScheme"))
     assertFalse(mainActivity.contains("Base64.decode"))
     assertFalse(mainActivity.contains("requestHanakoActionIfNeeded"))
-    assertFalse(mainActivity.contains("override fun onNewIntent"))
+    assertTrue(mainActivity.contains("override fun onNewIntent"))
+    assertTrue(mainActivity.contains("nbgRecordGatewayShareIntent"))
     listOf(
       "nbg.openFirstSession",
       "nbg.testPrompt",
@@ -4427,9 +4428,9 @@ class AndroidManifestBehaviorTest {
       "target_path_reviewed",
       "draft_sha256",
       "permission_tier_recorded",
-      "allowInstall=false",
-      "allowEnable=false",
-      "None for v1",
+      "Low or Medium",
+      "Dangerous permission tiers are never auto-installed",
+      "reversible local artifact",
       "safe presence marker",
       "skills2set",
       "Diagnostics must not expose",
@@ -4492,8 +4493,8 @@ class AndroidManifestBehaviorTest {
       "NbgLearnedSkillDraftReview",
       "nbgReviewLearnedSkillDraft",
       "completionEvidence?.review",
-      "allowInstall = false",
-      "allowEnable = false",
+      "autoSafe",
+      "withAutoAppliedArtifact",
       "permissionTier == NbgPermissionRiskTier.Dangerous",
     ).forEach {
       assertTrue(learnedDraftPolicy.contains(it))
@@ -4505,6 +4506,7 @@ class AndroidManifestBehaviorTest {
     assertTrue(skillIntegrityTest.contains("externalSkillPromotionRequiresSignedBundleAndPinnedSha256ButStaysUntrustedInV1"))
     assertTrue(learnedDraftTest.contains("learnedSkillDraftRequiresCompletionTargetSourceHashAndPermissionEvidence"))
     assertTrue(learnedDraftTest.contains("learnedSkillDraftBlocksMissingEvidenceAndKeepsDangerousDraftReviewOnly"))
+    assertTrue(learnedDraftTest.contains("learnedSkillDraftQueueAllowsSafeAutoApplyAndKeepsHighRiskReviewOnly"))
     assertFalse(contract.contains("Whether manual Skills page installation should require an explicit review dialog before enabling"))
     assertFalse(contract.contains("Whether trusted external Skills should use signed bundles, pinned SHA-256 allowlists, or both."))
 
@@ -5440,7 +5442,7 @@ class AndroidManifestBehaviorTest {
     assertTrue(agentUi.contains("NbgArchivedSkillRow"))
     assertTrue(agentUi.contains("onArchiveSkill = { hanako.archiveSkill(it) }"))
     assertTrue(agentUi.contains("onRestoreSkill = { hanako.restoreArchivedSkill(it) }"))
-    assertTrue(agentUi.contains("不会自动删除、安装或启用 Skill"))
+    assertTrue(agentUi.contains("不会自动删除"))
     assertTrue(agentUi.contains("Learned Skill drafts"))
     assertTrue(agentUi.contains("NbgLearnedSkillDraftQueueCard"))
     assertTrue(agentUi.contains("learnedDraftQueue = hanakoState.learnedSkillDraftQueue"))
@@ -5450,7 +5452,8 @@ class AndroidManifestBehaviorTest {
     assertTrue(agentUi.contains("onRejectLearnedDraft"))
     assertTrue(agentUi.contains("hanako.rejectLearnedSkillDraft(it)"))
     assertTrue(agentUi.contains("NBG_LEARNED_SKILL_DRAFT_REQUIRED_EVIDENCE.joinToString"))
-    assertTrue(agentUi.contains("v1 只允许保存为草稿，不能自动安装或启用"))
+    assertTrue(agentUi.contains("低/中风险可自动写入本地 Skill artifact 并启用"))
+    assertTrue(agentUi.contains("可回滚"))
     assertTrue(agentUi.contains("NbgSkillBundlesCard"))
     assertTrue(agentUi.contains("NbgExternalSkillPathsCard"))
     assertTrue(agentUi.contains("NbgSkillBundleDialog"))
@@ -5984,6 +5987,83 @@ class AndroidManifestBehaviorTest {
     assertTrue(learningUi.contains("onBuildRecall"))
     assertTrue(agentUi.contains("onBuildRecall = { hanako.buildLearningRecallForCurrentSession() }"))
     assertTrue(test.contains("learningRecallRanksLocalMemoryProfileSkillDraftsAndSessions"))
-    assertTrue(test.contains("skillImprovementCandidateUsesToolEvidenceAndStaysReviewOnly"))
+    assertTrue(test.contains("skillImprovementCandidateUsesToolEvidenceAndHighRiskStaysReviewGated"))
+  }
+
+  @Test
+  fun learningPageWiresScheduleRunnerAndAndroidShareGateway() {
+    val manifest = File("src/main/AndroidManifest.xml").readText()
+    val mainActivity = File("src/main/java/com/nbg/android/MainActivity.kt").readText()
+    val controller = File("src/main/java/com/nbg/android/HanakoChatController.kt").readText()
+    val schedule = File("src/main/java/com/nbg/android/NbgScheduleAutomation.kt").readText()
+    val gatewayShare = File("src/main/java/com/nbg/android/NbgGatewayShareIntent.kt").readText()
+    val learningUi = File("src/main/java/com/nbg/android/NbgAutonomousLearningUi.kt").readText()
+
+    assertTrue(manifest.contains("android.intent.action.SEND"))
+    assertTrue(manifest.contains("android:mimeType=\"text/*\""))
+    assertTrue(mainActivity.contains("onNewIntent"))
+    assertTrue(mainActivity.contains("nbgRecordGatewayShareIntent"))
+    assertTrue(mainActivity.contains("gatewayInboxRefreshToken"))
+    assertTrue(schedule.contains("nbgRunScheduledAutomationNow"))
+    assertTrue(schedule.contains("local-only"))
+    assertTrue(schedule.contains("不会静默执行 shell"))
+    assertTrue(controller.contains("nbgRunScheduledAutomationNow"))
+    assertTrue(controller.contains("NbgScheduleRunContext"))
+    assertTrue(gatewayShare.contains("Intent.ACTION_SEND"))
+    assertTrue(gatewayShare.contains("NbgInboundMessageSource.AndroidShareSheet"))
+    assertTrue(gatewayShare.contains("canExecuteTools = false"))
+    assertTrue(learningUi.contains("NbgLearningScheduleRunRow"))
+    assertTrue(learningUi.contains("最近运行"))
+  }
+
+  @Test
+  fun learningPageCanShareRedactedTrajectoryExportJson() {
+    val agentUi = File("src/main/java/com/nbg/android/NbgAgentUi.kt").readText()
+    val learningUi = File("src/main/java/com/nbg/android/NbgAutonomousLearningUi.kt").readText()
+    val share = File("src/main/java/com/nbg/android/NbgDiagnosticsExportShare.kt").readText()
+    val trajectoryTest = File("src/test/java/com/nbg/android/NbgTrajectoryExportPolicyTest.kt").readText()
+
+    assertTrue(agentUi.contains("shareTrajectoryExport"))
+    assertTrue(agentUi.contains("nbgBuildTrajectoryExportShareIntent"))
+    assertTrue(agentUi.contains("轨迹导出未通过本地脱敏检查"))
+    assertTrue(learningUi.contains("onShareTrajectoryExport"))
+    assertTrue(learningUi.contains("NbgInlineActionButton(label = \"分享\""))
+    assertTrue(share.contains("nbgBuildTrajectoryExportShareIntent"))
+    assertTrue(share.contains("NBG Trajectory Export"))
+    assertTrue(share.contains("nbg-trajectory-"))
+    assertTrue(trajectoryTest.contains("trajectoryExportAttachmentUsesDedicatedJsonNameAndPrunesOldTrajectoryExports"))
+  }
+
+  @Test
+  fun mcpConnectorShowsToolGatewayCategoryBadges() {
+    val models = File("src/main/java/com/nbg/android/HanakoMcpModels.kt").readText()
+    val ui = File("src/main/java/com/nbg/android/NbgAgentMcpUi.kt").readText()
+    val test = File("src/test/java/com/nbg/android/HanakoMcpToolCategoryTest.kt").readText()
+
+    listOf("WebSearch", "Browser", "Vision", "Image", "Speech", "Media", "Memory").forEach {
+      assertTrue(models.contains(it))
+    }
+    assertTrue(models.contains("nbgMcpToolCategory"))
+    assertTrue(models.contains("toolCategories"))
+    assertTrue(ui.contains("NbgMcpCategoryTags"))
+    assertTrue(ui.contains("nbgMcpToolCategory(tool).label"))
+    assertTrue(test.contains("mcpToolCategoryRecognizesHermesToolGatewayFamilies"))
+    assertTrue(test.contains("connectorSummarizesDistinctToolCategoriesInStableOrder"))
+  }
+
+  @Test
+  fun learnedSkillAutoApplyKeepsRollbackMetadataForPromotionSafety() {
+    val policy = File("src/main/java/com/nbg/android/NbgLearnedSkillDraftPolicy.kt").readText()
+    val store = File("src/main/java/com/nbg/android/NbgLearnedSkillDraftStore.kt").readText()
+    val skillsUi = File("src/main/java/com/nbg/android/NbgAgentSkillsUi.kt").readText()
+    val test = File("src/test/java/com/nbg/android/NbgLearnedSkillDraftStoreTest.kt").readText()
+
+    assertTrue(policy.contains("rollbackPath"))
+    assertTrue(policy.contains("previousArtifactSha256"))
+    assertTrue(store.contains(".nbg-rollback"))
+    assertTrue(store.contains("previousSha"))
+    assertTrue(skillsUi.contains("可回滚"))
+    assertTrue(skillsUi.contains("previousArtifactSha256"))
+    assertTrue(test.contains("storeKeepsRollbackMetadataWhenAutoApplyOverwritesExistingArtifact"))
   }
 }

@@ -318,7 +318,7 @@ private fun NbgLearnedSkillDraftQueueCard(
           )
           Text(
             text = if (hasDrafts) {
-              "${queue.pendingReviewCount} 待复核 · ${queue.blockedCount} 证据不足"
+              "${queue.pendingReviewCount} 待复核 · ${queue.autoAppliedCount} 自动应用 · ${queue.blockedCount} 证据不足"
             } else {
               "当前没有待审查草稿"
             },
@@ -333,12 +333,12 @@ private fun NbgLearnedSkillDraftQueueCard(
           )
         }
         NbgSkillsStatusPill(
-          text = if (queue.dangerousCount > 0) "${queue.dangerousCount} dangerous" else "review-only",
+          text = if (queue.dangerousCount > 0) "${queue.dangerousCount} dangerous" else "auto-gated",
           color = if (queue.dangerousCount > 0) NbgAgentColors.StatusRed else NbgAgentColors.TextMuted,
         )
       }
       Text(
-        text = "生成 Skill 必须具备完成证据、来源任务、目标路径复核、SHA-256 和权限等级；v1 只允许保存为草稿，不能自动安装或启用。",
+        text = "生成 Skill 必须具备完成证据、来源任务、目标路径复核、SHA-256 和权限等级；低/中风险可自动写入本地 Skill artifact 并启用，High/Dangerous 仍需确认或阻止。",
         color = NbgAgentColors.TextMuted,
         fontSize = 11.sp,
         lineHeight = 15.sp,
@@ -453,6 +453,18 @@ private fun NbgLearnedSkillDraftRow(
           color = NbgAgentColors.CodeText,
           fontSize = 10.sp,
           fontFamily = FontFamily.Monospace,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
+      if (draft.rollbackPath.isNotBlank() || draft.previousArtifactSha256.isNotBlank()) {
+        Text(
+          text = listOf(
+            "可回滚".takeIf { draft.rollbackPath.isNotBlank() },
+            draft.previousArtifactSha256.take(12).takeIf { it.isNotBlank() }?.let { "prev $it" },
+          ).filterNotNull().joinToString(" · "),
+          color = NbgAgentColors.StatusYellow,
+          fontSize = 10.5.sp,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
         )

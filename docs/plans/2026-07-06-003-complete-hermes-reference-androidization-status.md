@@ -19,13 +19,13 @@ Implemented in the current Android architecture:
 - Autonomous learning core: `NbgLearningCandidate`, `NbgLearningReview`, `NbgLearningEvent`, `NbgLearningSettings`, `NbgLearningAuditStore`, and `NbgAutonomousLearningEngine`.
 - Memory/User/Soul layers: local learning Memory mirror, `NbgUserProfileStore`, and `NbgAgentSoulStore`, all using local persistence and diagnostics redaction.
 - Learning UI: `NbgShellPage.Learning` renders audit events, learning graph stats, local Memory/Profile/Soul counts, Skill draft state, local cross-session Recall, Scheduled Automations, Gateway Inbox, and Trajectory Export status.
-- Skill learning safety: `/learn` and natural-language learning produce reviewed Skill draft queue entries; generated Skills are not installed or enabled without review.
-- Skill self-improvement foundation: ended tool results can produce `SkillImprovement` candidates from task evidence and terminal failure/success signals; candidates are audit-recorded and review-only.
+- Skill learning safety: `/learn` and natural-language learning produce reviewed Skill draft queue entries; generated Skills are policy-reviewed and record local rollback metadata when auto-applied.
+- Skill self-improvement foundation: ended tool results can produce `SkillImprovement` candidates from task evidence and terminal failure/success signals; Low/Medium candidates can auto-apply into local Skill artifacts with previous-artifact hash/backup metadata, while High/Dangerous remain review-gated or blocked.
 - Cross-session Recall foundation: `NbgLearningRecallBundle` ranks local Memory, User Profile, Soul, Skill drafts, and redacted session-summary-index entries for the current query/session.
-- Scheduled Automations foundation: `NbgScheduledAutomation`, `NbgSchedulePolicyReview`, `NbgScheduleRunEvent`, and `NbgScheduleStore`.
-- Gateway Inbox foundation: `NbgInboundMessageSource`, `NbgGatewayInboxMessage`, `NbgGatewayPolicyReview`, and `NbgGatewayInboxStore`.
-- Trajectory Export foundation: `NbgTrajectoryExportPolicyReview`, `NbgTrajectoryExportBundle`, redacted messages, redacted tool events, task evidence bundles, and learning events.
-- Existing Hermes-adjacent features remain wired: Memory UI, Skills UI, Skill Curator, Agents Team task panel, Expert Review, MCP connector governance, tool evidence cards, diagnostics export, and unified verification script.
+- Scheduled Automations v1: `NbgScheduledAutomation`, `NbgSchedulePolicyReview`, `NbgScheduleRunEvent`, `NbgScheduleStore`, and a local-only `run now` runner that produces read-only report evidence while blocking confirmation-only shell work.
+- Gateway Inbox v1: `NbgInboundMessageSource`, `NbgGatewayInboxMessage`, `NbgGatewayPolicyReview`, `NbgGatewayInboxStore`, and Android share-sheet ingestion into the Learning page.
+- Trajectory Export v1: `NbgTrajectoryExportPolicyReview`, `NbgTrajectoryExportBundle`, redacted messages, redacted tool events, task evidence bundles, learning events, and user-triggered local JSON sharing.
+- Existing Hermes-adjacent features remain wired: Memory UI, Skills UI, Skill Curator, Agents Team task panel, Expert Review, MCP connector governance with tool-category badges, tool evidence cards, diagnostics export, and unified verification script.
 
 ## Complete Hermes Reference Map
 
@@ -37,17 +37,17 @@ Implemented in the current Android architecture:
 | Persistent Memory | Local Memory UI + local learning Memory mirror | Implemented |
 | User profile / Soul | `NbgUserProfileStore` + `NbgAgentSoulStore` | Implemented |
 | Autonomous learning loop | Natural language markers, `/learn`, audit log, policy review | Implemented |
-| Skills from experience | Learned Skill draft queue, evidence/hash/path/risk review | Implemented review-only |
-| Skills improve during use | Tool-result-driven SkillImprovement candidates | Implemented review-only |
+| Skills from experience | Learned Skill draft queue, evidence/hash/path/risk review, Low/Medium auto-apply, rollback metadata | Implemented v1 |
+| Skills improve during use | Tool-result-driven SkillImprovement candidates with Low/Medium auto-apply and rollback metadata | Implemented v1 |
 | Learning graph / journey | Memory/Profile/Soul/Skill graph with linked/isolated stats | Implemented v1 |
 | Past session search | Local redacted `session-summary-index.json` + remote merge | Implemented |
 | Cross-session recall | Local Recall ranks Memory/Profile/Soul/Skill/session hits | Implemented v1 |
-| Cron scheduling | Local Scheduled Automations model and run audit | Implemented foundation |
-| Messaging gateway | Gateway Inbox model and policy gate | Implemented foundation |
-| Trajectory export | Local-only redacted export bundle | Implemented foundation |
+| Cron scheduling | Local Scheduled Automations model, run audit, and local-only read report runner | Implemented v1 |
+| Messaging gateway | Gateway Inbox model, policy gate, and Android share-sheet ingestion | Implemented v1 |
+| Trajectory export | Local-only redacted export bundle with user-triggered JSON share | Implemented v1 |
 | Multi-agent delegation | Agents Team task panel and bounded policy | Implemented v1 |
 | Expert review / MoA | URL API multi-model review, opt-in read-only | Implemented |
-| MCP integration | Android MCP server contract and connector governance | Implemented foundation |
+| MCP integration | Android MCP server contract, connector governance, and tool-category badges | Implemented v1 |
 | Pet visual state | Bundled pet store, integrity, pixel pet UI | Implemented |
 | Runtime environments: Docker/SSH/Modal/Daytona/Singularity | Not copied into APK; Android terminal/proot is the runtime boundary | Deferred / Android-specific |
 | Telegram/Discord/Slack/WhatsApp/Signal bots | Not hardcoded; external messages go through Gateway Inbox policy | Deferred |
@@ -67,11 +67,9 @@ Implemented in the current Android architecture:
 
 The current increment establishes stable local models, policy gates, persistence, tests, and Learning-page visibility. Deeper follow-up work remains:
 
-- WorkManager-backed real schedule execution with Android foreground-service constraints.
-- Share sheet and notification-reply Activity/Receiver entry points that call `NbgGatewayInboxStore`.
-- MCP connector category badges for Web Search, Browser, Vision, Image, Speech, and Media.
-- Promotion flow for SkillImprovement drafts: show diff against existing Skill, let user merge/reject, and keep rollback metadata.
-- User-facing export/share action for the generated trajectory JSON bundle.
+- WorkManager-backed repeated schedule execution with Android foreground-service constraints.
+- Notification-reply Activity/Receiver entry points that call `NbgGatewayInboxStore`.
+- Full promotion diff/merge UI for SkillImprovement drafts.
 - More granular rollback for applied learning events beyond audit status changes.
 
 ## Verification

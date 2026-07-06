@@ -604,6 +604,7 @@ private fun NbgMcpConnectorRow(
           overflow = TextOverflow.Ellipsis,
         )
       }
+      NbgMcpCategoryTags(connector.toolCategories)
       NbgMcpConnectorMeta(connector)
       Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         NbgInlineActionButton(
@@ -731,14 +732,21 @@ private fun NbgMcpToolRow(
           .background(if (enabled) NbgAgentColors.StatusGreen else NbgAgentColors.TextDisabled, CircleShape),
       )
       Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-        Text(
-          text = tool.displayName,
-          color = if (clickable || enabled) NbgAgentColors.TextStrong else NbgAgentColors.TextDisabled,
-          fontSize = 12.sp,
-          fontWeight = FontWeight.Medium,
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+          Text(
+            text = tool.displayName,
+            color = if (clickable || enabled) NbgAgentColors.TextStrong else NbgAgentColors.TextDisabled,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+          )
+          NbgMcpStatusPill(
+            text = nbgMcpToolCategory(tool).label,
+            color = NbgAgentColors.TextMuted,
+          )
+        }
         if (tool.description.isNotBlank()) {
           Text(
             text = tool.description,
@@ -756,6 +764,17 @@ private fun NbgMcpToolRow(
         fontSize = 11.sp,
         fontWeight = FontWeight.Medium,
       )
+    }
+  }
+}
+
+@Composable
+private fun NbgMcpCategoryTags(categories: List<NbgMcpToolCategory>) {
+  val visible = categories.filterNot { it == NbgMcpToolCategory.Other }.take(5)
+  if (visible.isEmpty()) return
+  Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    visible.forEach { category ->
+      NbgMcpStatusPill(text = category.label, color = NbgAgentColors.Primary)
     }
   }
 }

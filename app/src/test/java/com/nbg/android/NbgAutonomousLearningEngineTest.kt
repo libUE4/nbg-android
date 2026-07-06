@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.io.path.createTempDirectory
 
 class NbgAutonomousLearningEngineTest {
   private class FakeAuditStorage(raw: String? = null) : NbgLearningAuditStorage {
@@ -64,7 +65,7 @@ class NbgAutonomousLearningEngineTest {
   }
 
   @Test
-  fun engineAutoAppliesSafeMemoryProfileSoulAndQueuesSkillDraftForReview() {
+  fun engineAutoAppliesSafeMemoryProfileSoulAndSafeSkillDraft() {
     val engine = engine()
 
     val snapshot = engine.learnFromTurn(
@@ -79,11 +80,12 @@ class NbgAutonomousLearningEngineTest {
     assertEquals(3, snapshot.auditLog.events.size)
     assertTrue(snapshot.auditLog.events.any { it.status == NbgLearningEventStatus.AutoApplied && it.candidate.kind == NbgLearningCandidateKind.Memory })
     assertTrue(snapshot.auditLog.events.any { it.status == NbgLearningEventStatus.AutoApplied && it.candidate.kind == NbgLearningCandidateKind.UserProfile })
-    assertTrue(snapshot.auditLog.events.any { it.status == NbgLearningEventStatus.PendingReview && it.candidate.kind == NbgLearningCandidateKind.Skill })
+    assertTrue(snapshot.auditLog.events.any { it.status == NbgLearningEventStatus.AutoApplied && it.candidate.kind == NbgLearningCandidateKind.Skill })
     assertEquals(1, snapshot.localMemory.enabledEntries.size)
     assertEquals(1, snapshot.userProfile.visibleEntries.size)
     assertEquals(1, snapshot.soul.principles.size)
-    assertEquals(1, snapshot.learnedSkillDraftQueue.pendingReviewCount)
+    assertEquals(0, snapshot.learnedSkillDraftQueue.pendingReviewCount)
+    assertEquals(1, snapshot.learnedSkillDraftQueue.autoAppliedCount)
     assertEquals(0, snapshot.learnedSkillDraftQueue.installableCount)
     assertEquals(0, snapshot.learnedSkillDraftQueue.enableableCount)
   }
@@ -223,7 +225,7 @@ class NbgAutonomousLearningEngineTest {
   }
 
   @Test
-  fun skillImprovementCandidateUsesToolEvidenceAndStaysReviewOnly() {
+  fun skillImprovementCandidateUsesToolEvidenceAndHighRiskStaysReviewGated() {
     val engine = engine()
     val tool = HanakoToolStatus(
       key = "term-1",
@@ -250,6 +252,8 @@ class NbgAutonomousLearningEngineTest {
     assertEquals(1, snapshot.auditLog.events.size)
     assertEquals(NbgLearningCandidateKind.SkillImprovement, snapshot.auditLog.events.single().candidate.kind)
     assertEquals(1, snapshot.learnedSkillDraftQueue.visibleEntries.size)
+    assertEquals(0, snapshot.learnedSkillDraftQueue.autoAppliedCount)
+    assertEquals(1, snapshot.learnedSkillDraftQueue.pendingReviewCount)
     assertEquals(0, snapshot.learnedSkillDraftQueue.installableCount)
     assertEquals(0, snapshot.learnedSkillDraftQueue.enableableCount)
   }
@@ -296,7 +300,10 @@ class NbgAutonomousLearningEngineTest {
       memoryStore = NbgLocalLearningMemoryStore(FakeLocalMemoryStorage()),
       userProfileStore = NbgUserProfileStore(FakeProfileStorage()),
       soulStore = NbgAgentSoulStore(FakeSoulStorage()),
-      learnedSkillDraftStore = NbgLearnedSkillDraftStore(FakeDraftStorage()),
+      learnedSkillDraftStore = NbgLearnedSkillDraftStore(
+        storage = FakeDraftStorage(),
+        artifactRoot = createTempDirectory("nbg-engine-learned-skills").toFile(),
+      ),
     )
 
   private fun completeEvidence(): NbgTaskCompletionEvidenceBundle =

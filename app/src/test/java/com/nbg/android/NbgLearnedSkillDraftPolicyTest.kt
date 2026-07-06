@@ -30,17 +30,17 @@ class NbgLearnedSkillDraftPolicyTest {
       sourceTaskId = "task-skill",
       completionEvidence = completion,
       draftSha256 = "a".repeat(64),
-      permissionTier = NbgPermissionRiskTier.High,
+      permissionTier = NbgPermissionRiskTier.Medium,
     )
 
     assertEquals(NBG_LEARNED_SKILL_DRAFT_POLICY_VERSION, review.policyVersion)
     assertEquals(NBG_LEARNED_SKILL_DRAFT_REQUIRED_EVIDENCE, review.requiredEvidence)
     assertEquals(NBG_LEARNED_SKILL_DRAFT_REQUIRED_EVIDENCE, review.presentEvidence)
     assertTrue(review.allowDraft)
-    assertFalse("generated Skills must not install before review", review.allowInstall)
-    assertFalse("generated Skills must stay disabled before review", review.allowEnable)
-    assertTrue(review.requiresReview)
-    assertEquals(NbgPermissionRiskTier.High, review.permissionTier)
+    assertTrue("low/medium generated Skills may install automatically with complete evidence", review.allowInstall)
+    assertTrue("low/medium generated Skills may enable automatically with complete evidence", review.allowEnable)
+    assertFalse(review.requiresReview)
+    assertEquals(NbgPermissionRiskTier.Medium, review.permissionTier)
     assertEquals("[local-path]", review.targetPathLabel)
   }
 
@@ -90,7 +90,7 @@ class NbgLearnedSkillDraftPolicyTest {
   }
 
   @Test
-  fun learnedSkillDraftQueueKeepsGeneratedSkillsReviewOnly() {
+  fun learnedSkillDraftQueueAllowsSafeAutoApplyAndKeepsHighRiskReviewOnly() {
     val completion = NbgTaskCompletionEvidenceBundle(
       contractId = "task-skill",
       title = "复用构建流程",
@@ -104,7 +104,7 @@ class NbgLearnedSkillDraftPolicyTest {
         ),
       ),
     )
-    val pending = nbgLearnedSkillDraftQueueEntry(
+    val safe = nbgLearnedSkillDraftQueueEntry(
       id = "draft-1",
       skillName = "android-build",
       description = "Run Gradle verification before completion.",
@@ -113,9 +113,20 @@ class NbgLearnedSkillDraftPolicyTest {
       sourceTaskTitle = "完成 Android 构建检查",
       completionEvidence = completion,
       draftSha256 = "c".repeat(64),
-      permissionTier = NbgPermissionRiskTier.High,
+      permissionTier = NbgPermissionRiskTier.Medium,
       createdAtMs = 100L,
       updatedAtMs = 200L,
+    )
+    val highRisk = nbgLearnedSkillDraftQueueEntry(
+      id = "draft-high",
+      skillName = "android-build-high-risk",
+      targetPath = "/root/.hanako/skills/android-build-high-risk/SKILL.md",
+      sourceTaskId = "task-high",
+      completionEvidence = completion,
+      draftSha256 = "d".repeat(64),
+      permissionTier = NbgPermissionRiskTier.High,
+      createdAtMs = 250L,
+      updatedAtMs = 250L,
     )
     val blocked = nbgLearnedSkillDraftQueueEntry(
       id = "draft-2",
@@ -129,20 +140,23 @@ class NbgLearnedSkillDraftPolicyTest {
       updatedAtMs = 300L,
     )
 
-    val queue = nbgBuildLearnedSkillDraftQueue(listOf(blocked, pending))
+    val queue = nbgBuildLearnedSkillDraftQueue(listOf(blocked, highRisk, safe))
 
     assertEquals(NBG_LEARNED_SKILL_DRAFT_QUEUE_VERSION, queue.modelVersion)
-    assertEquals(2, queue.visibleEntries.size)
+    assertEquals(3, queue.visibleEntries.size)
     assertEquals("android-build", queue.visibleEntries.first().skillName)
-    assertEquals(1, queue.pendingReviewCount)
+    assertEquals(2, queue.pendingReviewCount)
     assertEquals(1, queue.blockedCount)
     assertEquals(1, queue.dangerousCount)
-    assertEquals(0, queue.installableCount)
-    assertEquals(0, queue.enableableCount)
-    assertEquals(NbgLearnedSkillDraftStatus.PendingReview, pending.status)
-    assertTrue(pending.review.allowDraft)
-    assertFalse(pending.review.allowInstall)
-    assertFalse(pending.review.allowEnable)
+    assertEquals(1, queue.installableCount)
+    assertEquals(1, queue.enableableCount)
+    assertEquals(NbgLearnedSkillDraftStatus.PendingReview, safe.status)
+    assertTrue(safe.review.allowDraft)
+    assertTrue(safe.review.allowInstall)
+    assertTrue(safe.review.allowEnable)
+    assertTrue(highRisk.review.allowDraft)
+    assertFalse(highRisk.review.allowInstall)
+    assertFalse(highRisk.review.allowEnable)
     assertEquals(NbgLearnedSkillDraftStatus.BlockedMissingEvidence, blocked.status)
     assertTrue(blocked.missingEvidence.contains("completion_evidence_complete"))
     assertTrue(blocked.missingEvidence.contains("target_path_reviewed"))
@@ -170,7 +184,7 @@ class NbgLearnedSkillDraftPolicyTest {
           .put("targetPath", "/root/.hanako/skills/json-skill/SKILL.md")
           .put("sourceTaskId", "task-json")
           .put("completionEvidence", completion.toJson())
-          .put("draftSha256", "d".repeat(64))
+          .put("draftSha256", "e".repeat(64))
           .put("permissionTier", "dangerous")
           .put("status", "pending")
           .put("createdAtMs", 10L)

@@ -338,20 +338,14 @@ class HanakoChatController(
 
   fun runScheduledAutomationNow(id: String) {
     val automation = scheduleStore.load().automations.firstOrNull { it.id == id } ?: return
-    val review = nbgReviewScheduledAutomation(automation)
     val now = System.currentTimeMillis()
-    val event = NbgScheduleRunEvent(
-      id = "run-${automation.id}-$now".sha256Hex().take(24),
-      automationId = automation.id,
-      status = if (review.allowCreate && !review.requiresConfirmation) {
-        NbgScheduleRunStatus.Succeeded
-      } else {
-        NbgScheduleRunStatus.Blocked
-      },
-      summary = review.reason,
-      evidenceRef = review.policyVersion,
-      startedAtMs = now,
-      finishedAtMs = now,
+    val event = nbgRunScheduledAutomationNow(
+      automation = automation,
+      context = NbgScheduleRunContext(
+        learningSnapshot = autonomousLearningEngine.snapshot(),
+        sessionSummaries = historyStore.readSummaryIndex(limit = 80),
+      ),
+      nowMs = now,
     )
     _state.update { it.copy(scheduleState = scheduleStore.recordRun(event)) }
   }
@@ -2536,6 +2530,8 @@ class HanakoChatController(
         http.ensureAndroidBundledSkillsEnabled(info, verifiedBundledSkillNames)
       }
         .onFailure { Log.w("NBG_HANAKO", "ensure Android bundled skills failed", it) }
+      runCatching { syncAutoAppliedLearnedSkills(info) }
+        .onFailure { Log.w("NBG_HANAKO", "sync auto-applied learned skills failed", it) }
       runCatching { http.listSessions(info) }
         .onSuccess { sessions ->
           _state.update { current ->
@@ -3644,6 +3640,32 @@ class HanakoChatController(
   private fun emitToolStatus(tool: HanakoToolStatus, allowLearning: Boolean = true) {
     onEvent(HanakoChatEvent.ToolStatus(tool))
     if (allowLearning) maybeLearnSkillImprovementFromTool(tool)
+  }
+
+  private fun syncAutoAppliedLearnedSkills(
+    info: HanakoServerInfo,
+    agentId: String = HANA_DEFAULT_MCP_AGENT_ID,
+  ) {
+    val autoApplied = learnedSkillDraftStore.load().visibleEntries
+      .filter { it.autoInstalled && it.review.allowInstall && it.status == NbgLearnedSkillDraftStatus.AutoApplied }
+    if (autoApplied.isEmpty()) return
+    autoApplied.forEach { entry ->
+      val dir = File(appContext.filesDir, "learned-skills/${entry.skillName.lowercase().replace(Regex("[^a-z0-9_.-]+"), "-").trim('-', '.', '_')}")
+      val skillFile = File(dir, "SKILL.md")
+      if (!skillFile.isFile) return@forEach
+      http.installSkill(info, HanakoSkillInstallInput(dir.absolutePath), agentId)
+    }
+    http.reloadSkills(info)
+    val snapshot = http.getSkills(info, agentId)
+    val enabled = snapshot.visibleSkills.filter { it.enabled }.map { it.name }.toMutableList()
+    autoApplied
+      .filter { it.autoEnabled && it.review.allowEnable }
+      .map { it.skillName }
+      .forEach { name -> if (snapshot.visibleSkills.any { it.name == name } && name !in enabled) enabled += name }
+    http.setAgentSkills(info, agentId, enabled.distinct())
+    http.reloadSkills(info)
+    val refreshed = http.getSkills(info, agentId)
+    _state.update { it.withSkillSnapshot(refreshed) }
   }
 
   private fun maybeLearnSkillImprovementFromTool(tool: HanakoToolStatus) {

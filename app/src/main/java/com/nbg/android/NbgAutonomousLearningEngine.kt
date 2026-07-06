@@ -336,8 +336,8 @@ internal fun nbgSkillImprovementCandidateFromTool(
   val signal = listOf(tool.title, tool.subtitle, tool.detail, tool.terminalOutput?.output.orEmpty())
     .joinToString(" ")
     .nbgLearningCompact(limit = 900)
-  val evidence = tool.visibleTaskCompletionEvidence()
-  val review = evidence?.review
+  val toolEvidence = tool.visibleTaskCompletionEvidence()
+  val review = toolEvidence?.review
   val hasUsefulSignal = signal.length >= 12 && (
     tool.success == false ||
       review?.state == NbgTaskCompletionEvidenceState.Failed ||
@@ -365,7 +365,7 @@ internal fun nbgSkillImprovementCandidateFromTool(
     sourceSessionPath = sessionPath,
     sourceTaskId = sourceTaskId,
     sourceTurnId = tool.key.take(120),
-    evidenceBundle = evidence ?: nbgLearningSelfEvidence(sourceTaskId, summary),
+    evidenceBundle = nbgSkillImprovementEvidence(sourceTaskId, tool, summary),
     permissionTier = risk,
     targetPath = "/data/data/com.nbg.android/files/learned-skills/$skillName/SKILL.md",
     draftSha256 = draftText.sha256Hex(),
@@ -373,6 +373,29 @@ internal fun nbgSkillImprovementCandidateFromTool(
     createdAtMs = nowMs,
   )
 }
+
+private fun nbgSkillImprovementEvidence(
+  contractId: String,
+  tool: HanakoToolStatus,
+  summary: String,
+): NbgTaskCompletionEvidenceBundle =
+  NbgTaskCompletionEvidenceBundle(
+    contractId = contractId,
+    title = "Skill 改进证据已捕获",
+    criteria = listOf(
+      nbgTaskCriterion(NbgTaskCompletionCriterionKind.ConsolidatedResult, "改进信号"),
+    ),
+    evidence = listOf(
+      nbgTaskEvidence(
+        kind = NbgTaskCompletionCriterionKind.ConsolidatedResult,
+        state = NbgTaskCompletionEvidenceState.Passed,
+        label = "skill_improvement_signal",
+        summary = listOf(tool.title, tool.subtitle, summary)
+          .joinToString(" ")
+          .nbgLearningCompact(limit = 220),
+      ),
+    ),
+  )
 
 internal fun HanakoToolStatus.shouldGenerateSkillImprovementCandidate(): Boolean {
   if (running) return false

@@ -134,7 +134,7 @@ Required evidence for Agent-generated Skill drafts:
 - `draft_sha256`
 - `permission_tier_recorded`
 
-Public-beta v1 may save a learned Skill only as a local draft when all required evidence is present. `allowInstall=false` and `allowEnable=false` are mandatory until a user review/install flow explicitly accepts the draft. Dangerous permission tiers must remain review-only and require strong confirmation before any future install path.
+Public-beta v1 may auto-apply learned Skills only when all required evidence is present, the target path is local/user-managed, the draft SHA-256 is recorded, and the permission tier is Low or Medium. High risk learned Skills remain review-required. Dangerous permission tiers are never auto-installed or auto-enabled and require strong confirmation before any future install path. Auto-applied learned Skills must keep permanent audit metadata and a reversible local artifact.
 
 Allowed `sourceKind` values:
 

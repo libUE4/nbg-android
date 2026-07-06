@@ -49,6 +49,7 @@ internal fun NbgAutonomousLearningScreen(
   onRunScheduleNow: (String) -> Unit,
   onArchiveGatewayMessage: (String) -> Unit,
   onBuildTrajectoryExport: () -> Unit,
+  onShareTrajectoryExport: () -> Unit,
   onClearTrajectoryExport: () -> Unit,
   onBuildRecall: () -> Unit,
   onApproveEvent: (String) -> Unit,
@@ -104,6 +105,7 @@ internal fun NbgAutonomousLearningScreen(
         NbgLearningTrajectoryExportCard(
           bundle = trajectoryExportBundle,
           onBuild = onBuildTrajectoryExport,
+          onShare = onShareTrajectoryExport,
           onClear = onClearTrajectoryExport,
         )
       }
@@ -161,6 +163,9 @@ private fun NbgLearningScheduleCard(
         NbgLearningScheduleRow(automation, onToggleSchedule, onRunNow)
       }
     }
+    state.visibleRunEvents.take(3).forEach { event ->
+      NbgLearningScheduleRunRow(event)
+    }
   }
 }
 
@@ -194,6 +199,48 @@ private fun NbgLearningScheduleRow(
         ) { onToggleSchedule(automation.id, !automation.enabled) }
         NbgInlineActionButton(label = "运行", icon = Icons.Filled.Refresh) { onRunNow(automation.id) }
       }
+    }
+  }
+}
+
+@Composable
+private fun NbgLearningScheduleRunRow(event: NbgScheduleRunEvent) {
+  val color = when (event.status) {
+    NbgScheduleRunStatus.Succeeded -> NbgAgentColors.StatusGreen
+    NbgScheduleRunStatus.Blocked,
+    NbgScheduleRunStatus.Failed -> NbgAgentColors.StatusRed
+    NbgScheduleRunStatus.Cancelled -> NbgAgentColors.TextMuted
+    NbgScheduleRunStatus.Queued,
+    NbgScheduleRunStatus.Running -> NbgAgentColors.StatusYellow
+  }
+  Surface(
+    modifier = Modifier.fillMaxWidth(),
+    shape = RoundedCornerShape(13.dp),
+    color = NbgAgentColors.SurfaceLow,
+    border = BorderStroke(1.dp, color.copy(alpha = 0.45f)),
+  ) {
+    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+      Text(
+        text = "最近运行 · ${event.status.label}",
+        color = color,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.SemiBold,
+      )
+      Text(
+        text = event.summary,
+        color = NbgAgentColors.TextMuted,
+        fontSize = 11.sp,
+        lineHeight = 15.sp,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+      )
+      Text(
+        text = event.evidenceRef,
+        color = NbgAgentColors.TextDisabled,
+        fontSize = 10.5.sp,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+      )
     }
   }
 }
@@ -243,6 +290,7 @@ private fun NbgLearningGatewayCard(
 private fun NbgLearningTrajectoryExportCard(
   bundle: NbgTrajectoryExportBundle?,
   onBuild: () -> Unit,
+  onShare: () -> Unit,
   onClear: () -> Unit,
 ) {
   NbgLearningCard {
@@ -272,7 +320,10 @@ private fun NbgLearningTrajectoryExportCard(
         fontSize = 12.sp,
         lineHeight = 17.sp,
       )
-      NbgInlineActionButton(label = "清除", icon = Icons.Filled.Close, onClick = onClear)
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        NbgInlineActionButton(label = "分享", icon = Icons.Filled.CheckCircle, onClick = onShare)
+        NbgInlineActionButton(label = "清除", icon = Icons.Filled.Close, onClick = onClear)
+      }
     }
   }
 }

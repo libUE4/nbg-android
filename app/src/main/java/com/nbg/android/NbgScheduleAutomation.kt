@@ -69,6 +69,11 @@ data class NbgScheduleRunEvent(
   val finishedAtMs: Long = 0L,
 )
 
+internal data class NbgScheduleRunContext(
+  val learningSnapshot: NbgAutonomousLearningSnapshot = NbgAutonomousLearningSnapshot(),
+  val sessionSummaries: List<HanakoSessionSummaryIndexEntry> = emptyList(),
+)
+
 data class NbgScheduleState(
   val automations: List<NbgScheduledAutomation> = emptyList(),
   val runEvents: List<NbgScheduleRunEvent> = emptyList(),
@@ -126,8 +131,9 @@ internal class NbgScheduleStore(
     val cleanId = id.trim()
     if (cleanId.isBlank()) return load()
     return save(
-      load().copy(
-        automations = load().automations.map {
+      load().let { current ->
+        current.copy(
+          automations = current.automations.map {
           if (it.id == cleanId) {
             val review = nbgReviewScheduledAutomation(it)
             it.copy(
@@ -139,12 +145,35 @@ internal class NbgScheduleStore(
             it
           }
         },
-      ),
+        )
+      },
     )
   }
 
   fun recordRun(event: NbgScheduleRunEvent): NbgScheduleState =
-    save(load().copy(runEvents = load().runEvents + event))
+    save(
+      load().let { current ->
+        val finishedAt = event.finishedAtMs.coerceAtLeast(event.startedAtMs)
+        current.copy(
+          automations = current.automations.map { automation ->
+            if (automation.id == event.automationId) {
+              automation.copy(
+                lastRunAtMs = finishedAt,
+                nextRunAtMs = if (automation.enabled && event.status != NbgScheduleRunStatus.Cancelled) {
+                  nbgNextScheduleRunAt(automation.cadence, finishedAt)
+                } else {
+                  automation.nextRunAtMs
+                },
+                updatedAtMs = finishedAt.coerceAtLeast(automation.updatedAtMs),
+              )
+            } else {
+              automation
+            }
+          },
+          runEvents = current.runEvents + event,
+        )
+      },
+    )
 }
 
 internal fun nbgReviewScheduledAutomation(
@@ -222,6 +251,70 @@ internal fun nbgDefaultSchedulePrompt(template: NbgScheduledAutomationTemplate):
     NbgScheduledAutomationTemplate.LearningReport ->
       "生成学习图谱报告，包含 Memory、User Profile、Soul 和 Skill 草稿统计。"
   }
+
+internal fun nbgRunScheduledAutomationNow(
+  automation: NbgScheduledAutomation,
+  context: NbgScheduleRunContext = NbgScheduleRunContext(),
+  nowMs: Long = System.currentTimeMillis(),
+): NbgScheduleRunEvent {
+  val review = nbgReviewScheduledAutomation(automation)
+  val startedAt = nowMs.coerceAtLeast(0L)
+  val allowRun = review.allowCreate && !review.requiresConfirmation
+  val summary = if (allowRun) {
+    nbgBuildScheduleRunSummary(automation, context)
+  } else {
+    review.reason
+  }
+  return NbgScheduleRunEvent(
+    id = "run-${automation.id}-$startedAt".sha256Hex().take(24),
+    automationId = automation.id,
+    status = if (allowRun) NbgScheduleRunStatus.Succeeded else NbgScheduleRunStatus.Blocked,
+    summary = summary.nbgScheduleCompact(240),
+    evidenceRef = listOf(
+      "local-only",
+      review.policyVersion,
+      automation.template.wireName,
+      review.permissionTier.wireName,
+    ).joinToString(":"),
+    startedAtMs = startedAt,
+    finishedAtMs = startedAt,
+  )
+}
+
+internal fun nbgBuildScheduleRunSummary(
+  automation: NbgScheduledAutomation,
+  context: NbgScheduleRunContext = NbgScheduleRunContext(),
+): String {
+  val snapshot = context.learningSnapshot
+  val sessions = context.sessionSummaries
+  return when (automation.template) {
+    NbgScheduledAutomationTemplate.DailyProjectSummary -> {
+      val latest = sessions.take(3)
+        .map { it.title.ifBlank { it.sessionPath.substringAfterLast('/') } }
+        .filter { it.isNotBlank() }
+      buildString {
+        append("本地日报：会话 ${sessions.size} 个")
+        append("，Memory ${snapshot.localMemory.enabledEntries.size} 条")
+        append("，待审核 ${snapshot.pendingReviewCount} 项")
+        if (latest.isNotEmpty()) append("。最近：${latest.joinToString(" / ")}")
+      }
+    }
+    NbgScheduledAutomationTemplate.WeeklyLearningAudit -> {
+      val audit = snapshot.auditLog
+      "本周学习审计：已应用 ${audit.autoAppliedCount}，待审核 ${snapshot.pendingReviewCount}，已阻止 ${snapshot.blockedCount}，Skill 草稿 ${snapshot.learnedSkillDraftQueue.visibleEntries.size}。"
+    }
+    NbgScheduledAutomationTemplate.TestCommand ->
+      "测试命令需要用户确认后在终端运行；本地自动化不会静默执行 shell。"
+    NbgScheduledAutomationTemplate.GitStatus -> {
+      val projectHint = sessions.firstOrNull()?.sessionPath?.takeIf { it.isNotBlank() }?.let { "[session-path]" } ?: "无活动会话"
+      "仓库状态检查：$projectHint；Android 自动化仅记录只读检查请求，具体 git 输出需在终端确认后运行。"
+    }
+    NbgScheduledAutomationTemplate.LearningReport -> {
+      val graph = snapshot.graph
+      "学习图谱报告：节点 ${graph.stats.nodeCount}，关联 ${graph.stats.edgeCount}，Memory ${graph.memoryCount}，画像 ${graph.profileCount}，Skills ${graph.skillCount}。"
+    }
+  }
+}
 
 internal fun nbgBuildScheduleState(
   automations: List<NbgScheduledAutomation>,

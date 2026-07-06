@@ -75,6 +75,52 @@ class NbgScheduleGatewayTrajectoryTest {
   }
 
   @Test
+  fun scheduleRunNowBuildsLocalEvidenceAndUpdatesRunWindow() {
+    val storage = FakeScheduleStorage()
+    val store = NbgScheduleStore(storage)
+    val automation = nbgScheduledAutomation(
+      title = "学习报告",
+      template = NbgScheduledAutomationTemplate.LearningReport,
+      prompt = "生成学习图谱报告。",
+      nowMs = 100L,
+    )
+    val context = NbgScheduleRunContext(
+      learningSnapshot = NbgAutonomousLearningSnapshot(
+        localMemory = NbgLocalLearningMemory(
+          entries = listOf(
+            NbgLocalLearningMemoryEntry(id = "m1", title = "fact", content = "project fact", updatedAtMs = 90L),
+          ),
+        ),
+      ),
+    )
+
+    store.upsert(automation)
+    val event = nbgRunScheduledAutomationNow(automation, context, nowMs = 200L)
+    val saved = store.recordRun(event)
+
+    assertEquals(NbgScheduleRunStatus.Succeeded, event.status)
+    assertTrue(event.summary.contains("学习图谱报告"))
+    assertTrue(event.evidenceRef.contains("local-only"))
+    assertEquals(200L, saved.automations.single().lastRunAtMs)
+    assertTrue(saved.automations.single().nextRunAtMs > 200L)
+  }
+
+  @Test
+  fun scheduleRunNowBlocksConfirmationOnlyTasks() {
+    val automation = nbgScheduledAutomation(
+      title = "运行测试",
+      template = NbgScheduledAutomationTemplate.TestCommand,
+      prompt = "./gradlew test",
+      nowMs = 100L,
+    )
+
+    val event = nbgRunScheduledAutomationNow(automation, nowMs = 200L)
+
+    assertEquals(NbgScheduleRunStatus.Blocked, event.status)
+    assertTrue(event.summary.contains("需要确认"))
+  }
+
+  @Test
   fun gatewayInboxDoesNotGrantExternalToolExecutionByDefault() {
     val local = nbgGatewayInboxMessage(
       source = NbgInboundMessageSource.LoopbackHttp,
