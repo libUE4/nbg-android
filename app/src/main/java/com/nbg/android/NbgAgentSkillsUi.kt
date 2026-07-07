@@ -612,13 +612,30 @@ private fun NbgSkillDiffMergeCard(
       }
       Text(
         text = "${preview.skillName}/${preview.relativePath} · +${preview.addedCount} / -${preview.removedCount} · ${preview.message.ifBlank { "diff preview" }}",
-        color = NbgAgentColors.TextMuted,
+        color = if (preview.conflict) NbgAgentColors.StatusRed else NbgAgentColors.TextMuted,
         fontSize = 11.sp,
         lineHeight = 15.sp,
         maxLines = 2,
         overflow = TextOverflow.Ellipsis,
       )
+      if (preview.conflict) {
+        Text(
+          text = "Patch draft 未命中当前文件内容；请先审查上下文或关闭预览。",
+          color = NbgAgentColors.StatusRed,
+          fontSize = 11.sp,
+          lineHeight = 15.sp,
+          maxLines = 2,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
       if (files.isNotEmpty()) {
+        Text(
+          text = "文件树 · ${files.size} files · ${files.count { it.rollbackAvailable }} rollback",
+          color = NbgAgentColors.TextMuted,
+          fontSize = 10.5.sp,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
           files.take(6).forEach { file ->
             Row(

@@ -1477,6 +1477,16 @@ fun NbgAndroidShell(
         onRevertEvent = { hanako.revertLearningEvent(it) },
         onEditJourneyNode = { id, content -> hanako.editLearningJourneyNode(id, content) },
         onDeleteJourneyNode = { hanako.deleteLearningJourneyNode(it) },
+        onOpenFtsHit = { hit ->
+          when {
+            hit.matchType.contains("memory") -> shellState.showPage(NbgShellPage.Memory)
+            hit.matchType.contains("skill") -> shellState.showPage(NbgShellPage.Skills)
+            hit.sessionPath.isNotBlank() -> {
+              hanako.selectSession(hit.sessionPath)
+              shellState.showChat()
+            }
+          }
+        },
         onOpenMemory = { shellState.showPage(NbgShellPage.Memory) },
         onOpenSkills = { shellState.showPage(NbgShellPage.Skills) },
       )

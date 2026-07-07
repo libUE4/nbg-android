@@ -247,6 +247,7 @@ class NbgHermesAdvancedParityTest {
     assertEquals("/s1.jsonl", hits.first().sessionPath)
     assertTrue(hits.first().score > 0)
     assertTrue(hits.first().snippet.contains("compile", ignoreCase = true))
+    assertEquals(listOf("provider", "routing", "compile"), hits.first().queryTerms)
   }
 
   @Test
@@ -350,5 +351,26 @@ class NbgHermesAdvancedParityTest {
     assertEquals(NbgSkillManageAction.WriteFile, request.action)
     assertEquals("references/notes.md", request.filePath)
     assertEquals("new notes", request.fileContent)
+  }
+
+  @Test
+  fun skillDiffPreviewFlagsPatchDraftConflicts() {
+    val root = createTempDirectory("skill-diff-conflict").toFile()
+    val skillDir = File(root, "android-build").also { it.mkdirs() }
+    File(skillDir, "SKILL.md").writeText("actual current step", Charsets.UTF_8)
+
+    val preview = NbgSkillDiffMerge(root).preview(
+      NbgSkillManageRequest(
+        action = NbgSkillManageAction.Patch,
+        name = "android-build",
+        filePath = "SKILL.md",
+        oldString = "missing old step",
+        newString = "new step",
+      ),
+    )
+
+    assertTrue(preview.conflict)
+    assertEquals(false, preview.changed)
+    assertTrue(preview.message.contains("not found"))
   }
 }

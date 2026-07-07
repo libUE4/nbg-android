@@ -39,8 +39,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -77,6 +80,7 @@ internal fun NbgAutonomousLearningScreen(
   onRevertEvent: (String) -> Unit,
   onEditJourneyNode: (String, String) -> Unit,
   onDeleteJourneyNode: (String) -> Unit,
+  onOpenFtsHit: (NbgSessionFtsHit) -> Unit,
   onOpenMemory: () -> Unit,
   onOpenSkills: () -> Unit,
 ) {
@@ -123,6 +127,7 @@ internal fun NbgAutonomousLearningScreen(
           onCompress = onCompressContext,
           onSetCompressionMode = onSetContextCompressionMode,
           onSearchLocalSessions = { onSearchLocalSessionsFts(sessionSearchQuery) },
+          onOpenFtsHit = onOpenFtsHit,
         )
       }
       item {
@@ -345,6 +350,7 @@ private fun NbgContextInsightsCard(
   onCompress: () -> Unit,
   onSetCompressionMode: (NbgContextCompressionMode) -> Unit,
   onSearchLocalSessions: () -> Unit,
+  onOpenFtsHit: (NbgSessionFtsHit) -> Unit,
 ) {
   NbgLearningCard {
     Text(
@@ -476,14 +482,22 @@ private fun NbgContextInsightsCard(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
           )
-          Text(
-            text = hit.snippet,
-            color = NbgAgentColors.TextMuted,
-            fontSize = 10.5.sp,
-            lineHeight = 14.sp,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-          )
+          Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+              text = nbgHighlightedFtsText(hit.snippet, hit.queryTerms),
+              color = NbgAgentColors.TextMuted,
+              fontSize = 10.5.sp,
+              lineHeight = 14.sp,
+              maxLines = 2,
+              overflow = TextOverflow.Ellipsis,
+              modifier = Modifier.weight(1f),
+            )
+            NbgInlineActionButton(
+              label = "打开",
+              icon = Icons.Filled.CheckCircle,
+              onClick = { onOpenFtsHit(hit) },
+            )
+          }
         }
       }
     }
@@ -549,6 +563,46 @@ private fun NbgMemoryProviderPluginsCard(
     }
   }
 }
+
+private fun nbgHighlightedFtsText(text: String, terms: List<String>) =
+  buildAnnotatedString {
+    val clean = text.ifBlank { "No snippet" }
+    val lower = clean.lowercase()
+    val ranges = terms
+      .flatMap { term ->
+        val needle = term.lowercase()
+        if (needle.isBlank()) {
+          emptyList()
+        } else {
+          buildList {
+            var index = lower.indexOf(needle)
+            while (index >= 0) {
+              add(index until (index + needle.length).coerceAtMost(clean.length))
+              index = lower.indexOf(needle, index + needle.length)
+            }
+          }
+        }
+      }
+      .sortedBy { it.first }
+      .fold(mutableListOf<IntRange>()) { merged, range ->
+        val last = merged.lastOrNull()
+        if (last != null && range.first <= last.last + 1) {
+          merged[merged.lastIndex] = last.first..maxOf(last.last, range.last)
+        } else {
+          merged += range
+        }
+        merged
+      }
+    var cursor = 0
+    ranges.forEach { range ->
+      if (range.first > cursor) append(clean.substring(cursor, range.first))
+      withStyle(SpanStyle(color = NbgAgentColors.TextStrong, background = NbgAgentColors.PrimarySoft.copy(alpha = 0.45f))) {
+        append(clean.substring(range.first, (range.last + 1).coerceAtMost(clean.length)))
+      }
+      cursor = (range.last + 1).coerceAtMost(clean.length)
+    }
+    if (cursor < clean.length) append(clean.substring(cursor))
+  }
 
 @Composable
 private fun NbgLearningScheduleCard(

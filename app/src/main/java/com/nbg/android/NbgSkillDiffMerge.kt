@@ -38,6 +38,7 @@ data class NbgSkillDiffPreview(
   val afterSha256: String,
   val hunks: List<NbgSkillDiffHunk>,
   val rollbackAvailable: Boolean = false,
+  val conflict: Boolean = false,
   val message: String = "",
 ) {
   val changed: Boolean
@@ -76,11 +77,22 @@ internal class NbgSkillDiffMerge(
     val file = resolveSkillFile(name, relativePath)
     if (name.isBlank() || file == null) return emptyPreview(name, relativePath, "bad skill or file path")
     val before = if (file.isFile) file.readText(Charsets.UTF_8) else ""
+    var conflict = false
+    var message = ""
     val after = when (request.action) {
       NbgSkillManageAction.Create,
       NbgSkillManageAction.Edit -> request.content.nbgSkillDiffContent()
       NbgSkillManageAction.Patch -> {
-        if (request.oldString.isBlank()) before else if (request.replaceAll) before.replace(request.oldString, request.newString) else before.replaceFirst(request.oldString, request.newString)
+        when {
+          request.oldString.isBlank() -> before
+          !before.contains(request.oldString) -> {
+            conflict = true
+            message = "patch target not found"
+            before
+          }
+          request.replaceAll -> before.replace(request.oldString, request.newString)
+          else -> before.replaceFirst(request.oldString, request.newString)
+        }
       }
       NbgSkillManageAction.WriteFile -> request.fileContent.nbgSkillDiffContent()
       NbgSkillManageAction.RemoveFile,
@@ -93,6 +105,8 @@ internal class NbgSkillDiffMerge(
       beforeText = before,
       afterText = after,
       rollbackAvailable = rollbackFileFor(file).isFile,
+      conflict = conflict,
+      message = message,
     )
   }
 
@@ -172,6 +186,7 @@ internal class NbgSkillDiffMerge(
     beforeText: String,
     afterText: String,
     rollbackAvailable: Boolean,
+    conflict: Boolean = false,
     message: String = "",
   ): NbgSkillDiffPreview =
     NbgSkillDiffPreview(
@@ -184,6 +199,7 @@ internal class NbgSkillDiffMerge(
       afterSha256 = afterText.sha256Hex(),
       hunks = nbgBuildSkillDiffHunks(beforeText, afterText),
       rollbackAvailable = rollbackAvailable,
+      conflict = conflict,
       message = message,
     )
 

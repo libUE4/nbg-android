@@ -11,6 +11,7 @@ data class NbgSessionFtsHit(
   val snippet: String,
   val score: Int,
   val matchType: String,
+  val queryTerms: List<String> = emptyList(),
 )
 
 data class NbgSessionFtsDocument(
@@ -31,7 +32,8 @@ internal class NbgSessionFtsIndexStore(context: Context) {
     limit: Int = 20,
   ): List<NbgSessionFtsHit> =
     runCatching {
-      val match = nbgSessionFtsMatchQuery(query)
+      val terms = nbgSessionFtsTerms(query)
+      val match = terms.joinToString(" ") { "$it*" }
       if (match.isBlank()) return@runCatching emptyList()
       val db = helper.writableDatabase
       db.beginTransaction()
@@ -55,10 +57,10 @@ internal class NbgSessionFtsIndexStore(context: Context) {
       } finally {
         db.endTransaction()
       }
-      searchDb(db, match, limit)
+      searchDb(db, match, terms, limit)
     }.getOrDefault(emptyList())
 
-  private fun searchDb(db: SQLiteDatabase, match: String, limit: Int): List<NbgSessionFtsHit> {
+  private fun searchDb(db: SQLiteDatabase, match: String, terms: List<String>, limit: Int): List<NbgSessionFtsHit> {
     val safeLimit = limit.coerceIn(1, 100)
     val sql = """
       SELECT sessionPath, title, snippet($TABLE, 4, '', '', ' ... ', 24) AS snippet, docType, bm25($TABLE) AS rank
@@ -82,6 +84,7 @@ internal class NbgSessionFtsIndexStore(context: Context) {
               snippet = snippet,
               score = (1000 - row).coerceAtLeast(1),
               matchType = "sqlite-$docType",
+              queryTerms = terms,
             ),
           )
           row += 1
@@ -194,7 +197,7 @@ internal fun nbgSearchSessionFts(
   val summaryHits = entries.mapNotNull { entry ->
     val haystack = listOf(entry.title, entry.snippet).joinToString(" ").lowercase()
     val score = terms.sumOf { term -> if (haystack.contains(term)) 8 else 0 } + entry.messageCount.coerceAtMost(20)
-    if (score <= 0) null else NbgSessionFtsHit(entry.sessionPath, entry.title, entry.snippet, score, "summary")
+    if (score <= 0) null else NbgSessionFtsHit(entry.sessionPath, entry.title, entry.snippet, score, "summary", terms)
   }
   val historyHits = histories.mapNotNull { (entry, snapshot) ->
     val messages = snapshot?.messages.orEmpty()
@@ -204,7 +207,7 @@ internal fun nbgSearchSessionFts(
       val score = terms.sumOf { term -> if (lower.contains(term)) 12 else 0 }
       if (score <= 0) null else score to text.nbgSessionFtsSnippet(terms)
     }.maxByOrNull { it.first } ?: return@mapNotNull null
-    NbgSessionFtsHit(entry.sessionPath, entry.title, best.second, best.first + 5, "message")
+    NbgSessionFtsHit(entry.sessionPath, entry.title, best.second, best.first + 5, "message", terms)
   }
   return (summaryHits + historyHits)
     .groupBy { it.sessionPath }
