@@ -53,6 +53,7 @@ class HanakoChatController(
   private val learnedSkillDraftStore = NbgLearnedSkillDraftStore(appContext)
   private val skillCuratorStore = NbgSkillCuratorStore(appContext)
   private val skillCuratorLoopStore = NbgSkillCuratorLoopStore(appContext)
+  private val skillCuratorSuggestionQueueStore = NbgSkillCuratorSuggestionQueueStore(appContext)
   private val skillCuratorLoopRunner = NbgSkillCuratorLoopRunner(appContext)
   private val skillCuratorLlmLoop = NbgSkillCuratorAndroidLlmLoop(appContext)
   private val autonomousLearningEngine = NbgAutonomousLearningEngine(appContext)
@@ -62,6 +63,7 @@ class HanakoChatController(
   private val skillManage = NbgSkillManage(appContext)
   private val skillDiffMerge = NbgSkillDiffMerge(appContext)
   private val contextCompressionStrategyStore = NbgContextCompressionStrategyStore(appContext)
+  private val sessionFtsIndexStore = NbgSessionFtsIndexStore(appContext)
   private val usageCostStore = NbgUsageCostStore(appContext)
   private val scheduleStore = NbgScheduleStore(appContext)
   private val gatewayInboxStore = NbgGatewayInboxStore(appContext)
@@ -273,6 +275,7 @@ class HanakoChatController(
     loadLearnedSkillDraftQueue()
     loadSkillCuratorMetadata()
     loadSkillCuratorLoopState()
+    loadSkillCuratorSuggestionQueue()
     loadAutonomousLearningSnapshot()
     loadExternalMemoryProviderState()
     loadContextCompressionStrategy()
@@ -377,8 +380,21 @@ class HanakoChatController(
 
   fun searchLocalSessionsFts(query: String) {
     val entries = historyStore.readSummaryIndex(limit = 300)
-    val histories = entries.take(80).map { entry -> entry to historyStore.readCachedHistory(entry.sessionPath) }
-    _state.update { it.copy(sessionFtsHits = nbgSearchSessionFts(entries, histories, query, limit = 20)) }
+    val histories = entries.take(120).map { entry -> entry to historyStore.readCachedHistory(entry.sessionPath) }
+    val current = _state.value
+    val sqliteHits = sessionFtsIndexStore.rebuildAndSearch(
+      documents = nbgBuildSessionFtsDocuments(
+        entries = entries,
+        histories = histories,
+        learning = current.autonomousLearningSnapshot,
+        skills = current.rawSkillsSnapshot,
+        drafts = current.learnedSkillDraftQueue,
+      ),
+      query = query,
+      limit = 20,
+    )
+    val hits = sqliteHits.ifEmpty { nbgSearchSessionFts(entries, histories, query, limit = 20) }
+    _state.update { it.copy(sessionFtsHits = hits) }
   }
 
   fun loadScheduleState() {
@@ -560,6 +576,10 @@ class HanakoChatController(
     _state.update { it.copy(skillCuratorLoopState = skillCuratorLoopStore.load()) }
   }
 
+  fun loadSkillCuratorSuggestionQueue() {
+    _state.update { it.copy(skillCuratorSuggestionQueue = skillCuratorSuggestionQueueStore.load()) }
+  }
+
   fun setSkillCuratorLoopEnabled(enabled: Boolean) {
     val state = skillCuratorLoopStore.setEnabled(enabled)
     if (enabled) NbgSkillCuratorLoopWorkManager.ensureScheduled(appContext)
@@ -570,6 +590,41 @@ class HanakoChatController(
     val state = skillCuratorLoopStore.setLlmReviewEnabled(enabled)
     if (enabled) NbgSkillCuratorLoopWorkManager.ensureScheduled(appContext)
     _state.update { it.copy(skillCuratorLoopState = state) }
+  }
+
+  fun ignoreSkillCuratorSuggestion(id: String) {
+    val queue = skillCuratorSuggestionQueueStore.updateStatus(id, NbgSkillCuratorSuggestionStatus.Ignored, "user ignored")
+    _state.update { it.copy(skillCuratorSuggestionQueue = queue, skillsError = null, lastError = null) }
+  }
+
+  fun approveSkillCuratorSuggestion(id: String) {
+    val entry = skillCuratorSuggestionQueueStore.load().entries.firstOrNull { it.id == id.trim() } ?: return
+    if (entry.action == "archive") {
+      val active = _state.value.rawSkillsSnapshot.visibleSkills.firstOrNull { it.name == entry.skillName }?.enabled == true
+      if (active) {
+        val queue = skillCuratorSuggestionQueueStore.updateStatus(id, NbgSkillCuratorSuggestionStatus.Blocked, "enabled skill cannot be archived")
+        _state.update {
+          it.copy(
+            skillCuratorSuggestionQueue = queue,
+            skillsError = "请先禁用 ${entry.skillName}，再接受归档建议。",
+            lastError = null,
+          )
+        }
+        return
+      }
+      val metadata = skillCuratorStore.archive(entry.skillName, reason = "llm_curator:${entry.id}")
+      val queue = skillCuratorSuggestionQueueStore.updateStatus(id, NbgSkillCuratorSuggestionStatus.Applied, "archived")
+      _state.update { state ->
+        state.withSkillCuratorMetadata(metadata).copy(
+          skillCuratorSuggestionQueue = queue,
+          skillsError = null,
+          lastError = null,
+        )
+      }
+      return
+    }
+    val queue = skillCuratorSuggestionQueueStore.updateStatus(id, NbgSkillCuratorSuggestionStatus.Accepted, "advisory suggestion accepted")
+    _state.update { it.copy(skillCuratorSuggestionQueue = queue, skillsError = null, lastError = null) }
   }
 
   fun stop() {
@@ -2055,9 +2110,11 @@ class HanakoChatController(
       var state = withContext(Dispatchers.IO) { skillCuratorLoopRunner.runOnce(snapshot = _state.value.rawSkillsSnapshot) }
       state = withContext(Dispatchers.IO) { skillCuratorLlmLoop.runOnce(snapshot = _state.value.rawSkillsSnapshot) }
       val metadata = skillCuratorStore.load()
+      val suggestionQueue = skillCuratorSuggestionQueueStore.load()
       _state.update { current ->
         current.withSkillCuratorMetadata(metadata).copy(
           skillCuratorLoopState = state,
+          skillCuratorSuggestionQueue = suggestionQueue,
           skillsError = null,
           lastError = state.lastError.ifBlank { current.lastError },
         )
@@ -4283,5 +4340,16 @@ private fun nbgSessionFtsSystemMessage(hits: List<NbgSessionFtsHit>): String =
     }.let { "本地 FTS 命中 ${hits.size} 条：\n$it" }
   }
 
-private fun nbgUsageCostSystemMessage(state: NbgUsageCostState): String =
-  "成本/用量：${formatTokenCount(state.totalTokens)} tokens · 估算 $${String.format(java.util.Locale.US, "%.4f", state.estimatedCostUsd)} · 失败 ${state.failureCount}"
+private fun nbgUsageCostSystemMessage(state: NbgUsageCostState): String {
+  val providers = state.providerBreakdowns.take(3).joinToString("\n") { breakdown ->
+    "- provider ${breakdown.label}: ${formatTokenCount(breakdown.totalTokens)} · ${breakdown.eventCount} turns · fail ${breakdown.failureCount}"
+  }
+  val models = state.modelBreakdowns.take(3).joinToString("\n") { breakdown ->
+    "- model ${breakdown.label}: ${formatTokenCount(breakdown.totalTokens)} · avg ${breakdown.averageLatencyMs}ms"
+  }
+  return buildString {
+    append("成本/用量：${formatTokenCount(state.totalTokens)} tokens · 估算 $${String.format(java.util.Locale.US, "%.4f", state.estimatedCostUsd)} · 失败 ${state.failureCount}")
+    if (providers.isNotBlank()) append("\n$providers")
+    if (models.isNotBlank()) append("\n$models")
+  }
+}

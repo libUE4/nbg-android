@@ -2113,6 +2113,7 @@ data class HanakoChatState(
   val rawSkillsSnapshot: HanakoSkillsSnapshot = HanakoSkillsSnapshot(),
   val skillCuratorMetadata: NbgSkillCuratorMetadata = NbgSkillCuratorMetadata(),
   val skillCuratorLoopState: NbgSkillCuratorLoopState = NbgSkillCuratorLoopState(),
+  val skillCuratorSuggestionQueue: NbgSkillCuratorSuggestionQueue = NbgSkillCuratorSuggestionQueue(),
   val skillDiffPreview: NbgSkillDiffPreview? = null,
   val skillDiffFiles: List<NbgSkillDiffFile> = emptyList(),
   val learnedSkillDraftQueue: NbgLearnedSkillDraftQueue = NbgLearnedSkillDraftQueue(),

@@ -185,6 +185,41 @@ class NbgHermesAdvancedParityTest {
   }
 
   @Test
+  fun curatorSuggestionQueueTracksPendingAndStatuses() {
+    val queue = parseNbgSkillCuratorSuggestionQueue(
+      JSONObject()
+        .put(
+          "entries",
+          JSONArray()
+            .put(
+              JSONObject()
+                .put("id", "s1")
+                .put("skillName", "android-build")
+                .put("action", "archive")
+                .put("reason", "unused duplicate")
+                .put("status", "pending")
+                .put("createdAtMs", 20),
+            )
+            .put(
+              JSONObject()
+                .put("id", "s2")
+                .put("skillName", "terminal")
+                .put("action", "rewrite")
+                .put("reason", "needs shorter instructions")
+                .put("status", "accepted")
+                .put("createdAtMs", 10),
+            ),
+        )
+        .toString(),
+    )
+
+    assertEquals(2, queue.entries.size)
+    assertEquals(1, queue.pendingCount)
+    assertEquals("android-build", queue.pendingEntries.first().skillName)
+    assertEquals(NbgSkillCuratorSuggestionStatus.Accepted, queue.entries.first { it.id == "s2" }.status)
+  }
+
+  @Test
   fun sessionFtsRanksSummaryAndMessageHits() {
     val entries = listOf(
       HanakoSessionSummaryIndexEntry("/s1.jsonl", "Gradle fix", "resolved compile issue", 1L, 4, 0, 0),
@@ -200,6 +235,50 @@ class NbgHermesAdvancedParityTest {
     assertEquals("/s1.jsonl", hits.first().sessionPath)
     assertTrue(hits.first().score > 0)
     assertTrue(hits.first().snippet.contains("compile", ignoreCase = true))
+  }
+
+  @Test
+  fun sessionFtsBuildsDocumentsForMemorySkillsAndDrafts() {
+    val entries = listOf(HanakoSessionSummaryIndexEntry("/s1.jsonl", "Gradle fix", "resolved compile issue", 1L, 4, 0, 0))
+    val histories = listOf(entries[0] to HanakoHistorySnapshot(messages = listOf(HanakoHistoryMessage(1, "assistant", "Kotlin compile passed"))))
+    val learning = NbgAutonomousLearningSnapshot(
+      localMemory = nbgBuildLocalLearningMemory(
+        listOf(NbgLocalLearningMemoryEntry(id = "m1", title = "Provider routing", content = "OpenRouter extra body handling")),
+      ),
+    )
+    val skills = HanakoSkillsSnapshot(
+      skills = listOf(HanakoSkillSummary(name = "android-build", description = "Gradle verification workflow")),
+    )
+    val draft = NbgLearnedSkillDraftQueue(
+      entries = listOf(
+        NbgLearnedSkillDraftQueueEntry(
+          id = "d1",
+          skillName = "sqlite-search",
+          description = "Index local messages",
+          review = NbgLearnedSkillDraftReview(
+            policyVersion = "test",
+            allowDraft = true,
+            allowInstall = false,
+            allowEnable = false,
+            requiresReview = true,
+            requiredEvidence = emptyList(),
+            presentEvidence = emptyList(),
+            permissionTier = NbgPermissionRiskTier.Low,
+            sourceTaskId = "task",
+            targetPathLabel = "[local-path]",
+            reason = "test",
+          ),
+          status = NbgLearnedSkillDraftStatus.PendingReview,
+        ),
+      ),
+    )
+
+    val docs = nbgBuildSessionFtsDocuments(entries, histories, learning, skills, draft)
+
+    assertTrue(docs.any { it.docType == "memory" && it.body.contains("OpenRouter") })
+    assertTrue(docs.any { it.docType == "skill" && it.title == "android-build" })
+    assertTrue(docs.any { it.docType == "skill-draft" && it.title == "sqlite-search" })
+    assertEquals("provider* routing*", nbgSessionFtsMatchQuery("provider routing"))
   }
 
   @Test
@@ -224,6 +303,8 @@ class NbgHermesAdvancedParityTest {
     assertEquals(1500L, state.totalTokens)
     assertEquals(1, state.failureCount)
     assertTrue(state.estimatedCostUsd > 0.0)
+    assertEquals("openrouter", state.providerBreakdowns.first().label)
+    assertEquals("gpt-5", state.modelBreakdowns.first().label)
   }
 
   @Test

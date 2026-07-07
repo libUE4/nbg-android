@@ -369,6 +369,26 @@ private fun NbgContextInsightsCard(
       maxLines = 1,
       overflow = TextOverflow.Ellipsis,
     )
+    usageCostState.providerBreakdowns.take(2).forEach { breakdown ->
+      Text(
+        text = "Provider ${breakdown.label}: ${breakdown.totalTokens} tokens · ${breakdown.eventCount} turns · fail ${breakdown.failureCount} · $${String.format(java.util.Locale.US, "%.4f", breakdown.estimatedCostUsd)}",
+        color = NbgAgentColors.TextMuted,
+        fontSize = 10.5.sp,
+        lineHeight = 14.sp,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+      )
+    }
+    usageCostState.modelBreakdowns.take(2).forEach { breakdown ->
+      Text(
+        text = "Model ${breakdown.label}: ${breakdown.totalTokens} tokens · avg ${breakdown.averageLatencyMs}ms",
+        color = NbgAgentColors.TextMuted,
+        fontSize = 10.5.sp,
+        lineHeight = 14.sp,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+      )
+    }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
       NbgInlineActionButton(label = "刷新", icon = Icons.Filled.Refresh, onClick = onRefresh)
       NbgInlineActionButton(label = "压缩", icon = Icons.AutoMirrored.Filled.Undo, enabled = insights.usage.compressionAvailable, onClick = onCompress)

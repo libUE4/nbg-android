@@ -18,6 +18,18 @@ data class NbgUsageCostEvent(
   val createdAtMs: Long = 0L,
 )
 
+data class NbgUsageCostBreakdown(
+  val label: String,
+  val providerId: String = "",
+  val modelId: String = "",
+  val sessionPath: String = "",
+  val eventCount: Int = 0,
+  val totalTokens: Long = 0L,
+  val failureCount: Int = 0,
+  val averageLatencyMs: Long = 0L,
+  val estimatedCostUsd: Double = 0.0,
+)
+
 data class NbgUsageCostState(
   val events: List<NbgUsageCostEvent> = emptyList(),
   val modelVersion: String = NBG_USAGE_COST_VERSION,
@@ -33,6 +45,30 @@ data class NbgUsageCostState(
       val tokens = event.totalTokens.coerceAtLeast(event.inputTokens + event.outputTokens)
       tokens / 1_000_000.0 * nbgEstimatedUsdPerMillion(event.modelId)
     }
+
+  val providerBreakdowns: List<NbgUsageCostBreakdown>
+    get() = events
+      .groupBy { it.providerId.ifBlank { "unknown" } }
+      .map { (providerId, grouped) ->
+        grouped.toUsageCostBreakdown(label = providerId, providerId = providerId)
+      }
+      .sortedByDescending { it.totalTokens }
+
+  val modelBreakdowns: List<NbgUsageCostBreakdown>
+    get() = events
+      .groupBy { it.modelId.ifBlank { "unknown" } }
+      .map { (modelId, grouped) ->
+        grouped.toUsageCostBreakdown(label = modelId, modelId = modelId)
+      }
+      .sortedByDescending { it.totalTokens }
+
+  val sessionBreakdowns: List<NbgUsageCostBreakdown>
+    get() = events
+      .groupBy { it.sessionPath.ifBlank { "current" } }
+      .map { (sessionPath, grouped) ->
+        grouped.toUsageCostBreakdown(label = sessionPath.substringAfterLast('/').ifBlank { "current" }, sessionPath = sessionPath)
+      }
+      .sortedByDescending { it.totalTokens }
 }
 
 internal class NbgUsageCostStore(context: Context) {
@@ -120,4 +156,28 @@ private fun nbgEstimatedUsdPerMillion(modelId: String): Double {
     "qwen" in id || "kimi" in id || "deepseek" in id -> 1.0
     else -> 2.0
   }
+}
+
+private fun List<NbgUsageCostEvent>.toUsageCostBreakdown(
+  label: String,
+  providerId: String = "",
+  modelId: String = "",
+  sessionPath: String = "",
+): NbgUsageCostBreakdown {
+  val tokens = sumOf { it.totalTokens.coerceAtLeast(it.inputTokens + it.outputTokens) }
+  val latencyEvents = filter { it.latencyMs > 0L }
+  return NbgUsageCostBreakdown(
+    label = label.take(160),
+    providerId = providerId,
+    modelId = modelId,
+    sessionPath = sessionPath,
+    eventCount = size,
+    totalTokens = tokens,
+    failureCount = count { it.failed },
+    averageLatencyMs = if (latencyEvents.isEmpty()) 0L else latencyEvents.sumOf { it.latencyMs } / latencyEvents.size,
+    estimatedCostUsd = sumOf { event ->
+      val eventTokens = event.totalTokens.coerceAtLeast(event.inputTokens + event.outputTokens)
+      eventTokens / 1_000_000.0 * nbgEstimatedUsdPerMillion(event.modelId)
+    },
+  )
 }

@@ -20,13 +20,13 @@ Implemented in the current Android architecture:
 - Memory provider manager v3: `NbgMemoryProviderManager` provides Hermes-style `prefetchAll`, `syncAll`, and `queuePrefetchAll` around Android local Memory/Profile/Soul/Skill/session recall, while `NbgExternalMemoryAdapter` can opt-in sync/prefetch Honcho, mem0, supermemory, or holographic providers using encrypted per-provider secrets. No third-party account is enabled by default.
 - Closed learning loop: Android now buffers the current user turn plus final assistant-visible answer, commits the full trajectory at turn end, and injects ranked `learningContext` recall into the next prompt `uiContext`.
 - Memory/User/Soul layers: local learning Memory mirror, `NbgUserProfileStore`, and `NbgAgentSoulStore`, all using local persistence and diagnostics redaction.
-- Learning UI: `NbgShellPage.Learning` renders audit events, learning graph stats, local Memory/Profile/Soul counts, Skill draft state, local cross-session Recall, external Memory provider plugins, Context Insights, compression strategy controls, local session FTS results, token/cost estimates, Scheduled Automations, Gateway Inbox, and Trajectory Export status.
+- Learning UI: `NbgShellPage.Learning` renders audit events, learning graph stats, local Memory/Profile/Soul counts, Skill draft state, local cross-session Recall, external Memory provider plugins, Context Insights, compression strategy controls, SQLite-backed local FTS results, provider/model token-cost breakdowns, Scheduled Automations, Gateway Inbox, and Trajectory Export status.
 - Skill learning safety: `/learn` and natural-language learning produce reviewed Skill draft queue entries; generated Skills are policy-reviewed and record local rollback metadata when auto-applied.
 - SkillManage v3: Android-local `NbgSkillManage` supports create/edit/patch/write_file/remove_file/delete for learned Skill artifacts inside app-private `learned-skills`, with rollback backups, path containment, and multi-file `NbgSkillDiffMerge` hunk previews / selective merge / rollback comparison UI on the Skills page.
 - Skill self-improvement foundation: ended tool results can produce `SkillImprovement` candidates from task evidence and terminal failure/success signals; Low/Medium candidates can auto-apply into local Skill artifacts with previous-artifact hash/backup metadata, while High/Dangerous remain review-gated or blocked. Applied artifacts are now reviewable through the diff/merge card.
-- Skill Curator loop v3: `NbgSkillCuratorLoopWorker` can run a user-enabled WorkManager background curator pass and an opt-in read-only LLM curator pass through the configured URL API model, preserving the default no-cloud/no-auto-delete boundary.
+- Skill Curator loop v4: `NbgSkillCuratorLoopWorker` can run a user-enabled WorkManager background curator pass and an opt-in read-only LLM curator pass through the configured URL API model. LLM results are persisted into `NbgSkillCuratorSuggestionQueue` for explicit accept/ignore handling, preserving the default no-cloud/no-auto-delete boundary.
 - Model Provider Profiles v2: `NbgModelProviderProfile` registers OpenRouter/OpenAI/Gemini/Qwen/Kimi/Nous/Ollama style provider metadata and routes model fetch, verification, read-only generation, auth header, thinking/extra-body, and chat/model endpoints through provider profiles.
-- Context maintenance v2: Android tracks `NbgContextInsights`, synchronizes context/token usage events, estimates token/cost totals, exposes slash commands `/compress`, `/usage`, `/insights`, `/search`, `/cost`, `/memory`, `/provider`, `/model`, `/skills`, `/tools`, `/agents`, and `/curator`, and can remind or auto-compress when context usage crosses the configured threshold.
+- Context maintenance v3: Android tracks `NbgContextInsights`, synchronizes context/token usage events, estimates token/cost totals by provider/model/session, exposes slash commands `/compress`, `/usage`, `/insights`, `/search`, `/cost`, `/memory`, `/provider`, `/model`, `/skills`, `/tools`, `/agents`, and `/curator`, and can remind or auto-compress when context usage crosses the configured threshold.
 - Learning Journey v1: Learning graph nodes can be edited/deleted from Android-local Memory/Profile/Soul/Skill draft/installed learned Skill stores.
 - Cross-session Recall foundation: `NbgLearningRecallBundle` ranks local Memory, User Profile, Soul, Skill drafts, installed learned Skill metadata, and redacted session-summary-index entries for the current query/session.
 - Scheduled Automations v1: `NbgScheduledAutomation`, `NbgSchedulePolicyReview`, `NbgScheduleRunEvent`, `NbgScheduleStore`, WorkManager periodic scanning, and a local-only runner that produces read-only report evidence while blocking confirmation-only shell work.
@@ -47,7 +47,7 @@ Implemented in the current Android architecture:
 | Skills from experience | Learned Skill draft queue, evidence/hash/path/risk review, Low/Medium auto-apply, rollback metadata, local SkillManage operations, multi-file diff/merge/rollback UI | Implemented v3 |
 | Skills improve during use | Tool-result-driven SkillImprovement candidates with Low/Medium auto-apply, rollback metadata, local patch/write-file support, multi-file hunk diff review | Implemented v3 |
 | Learning graph / journey | Memory/Profile/Soul/Skill graph, editable/deletable Journey nodes, installed Skill related_skills links | Implemented v1 |
-| Past session search | Local redacted `session-summary-index.json` + cached-message FTS-style ranking + remote merge | Implemented v2 |
+| Past session search | Local redacted `session-summary-index.json` + cached-message SQLite FTS5 index for sessions, Memory, Skills, and Skill drafts + remote merge fallback | Implemented v3 |
 | Cross-session recall | Local Recall ranks Memory/Profile/Soul/Skill/session hits | Implemented v1 |
 | Cron scheduling | WorkManager-backed local Scheduled Automations, run audit, and local-only read report runner | Implemented v1 |
 | Messaging gateway | Gateway Inbox model, policy gate, Android share-sheet ingestion, and notification-reply ingestion | Implemented v1 |
@@ -55,7 +55,7 @@ Implemented in the current Android architecture:
 | Multi-agent delegation | Agents Team task panel, bounded policy, parallel budget/retry/isolation/consolidation labels | Implemented v2 |
 | Expert review / MoA | URL API multi-model review, opt-in read-only | Implemented |
 | ProviderProfile model plugins | Android `NbgModelProviderProfile` registry and true provider-profile routing for endpoint/auth/extra-body/model verification | Implemented v2 |
-| Context compression / usage / insights | Local slash command center, usage snapshots, auto/remind compression strategy, token/cost view, Learning-page Context Insights, existing compress-fork bridge | Implemented v2 |
+| Context compression / usage / insights | Local slash command center, usage snapshots, auto/remind compression strategy, provider/model token-cost breakdowns, Learning-page Context Insights, existing compress-fork bridge | Implemented v3 |
 | MCP integration | Android MCP server contract, connector governance, and tool-category badges | Implemented v1 |
 | Pet visual state | Bundled pet store, integrity, pixel pet UI | Implemented |
 | Runtime environments: Docker/SSH/Modal/Daytona/Singularity | Not copied into APK; Android terminal/proot is the runtime boundary | Deferred / Android-specific |
@@ -77,7 +77,7 @@ Implemented in the current Android architecture:
 The current increment establishes stable local models, policy gates, persistence, tests, and Learning/Skills/URL API page visibility. Deeper follow-up work remains:
 
 - Provider-specific external Memory account UX can still be refined after real-world Honcho/mem0/supermemory endpoint testing. The adapter boundary and encrypted secret flow are implemented, but no third-party account is enabled by default.
-- LLM curator suggestions remain advisory and read-only. The next deeper step would be a richer merge/archive proposal queue instead of immediate local curator metadata updates.
+- LLM curator suggestions are now persisted into an explicit accept/ignore queue. Accepting archive suggestions applies only local curator archive metadata; merge/rewrite suggestions remain advisory until a user applies a concrete Skill diff.
 - Deeper visual diff ergonomics such as side-by-side file panes and long-running multi-file merge sessions remain future UI polish. Android now has multi-file hunk preview, selective hunk merge, and rollback comparison for local learned Skill artifacts.
 
 ## Verification

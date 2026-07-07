@@ -56,6 +56,7 @@ internal fun NbgSkillsScreen(
   rawSnapshot: HanakoSkillsSnapshot = snapshot,
   skillCuratorMetadata: NbgSkillCuratorMetadata = NbgSkillCuratorMetadata(),
   skillCuratorLoopState: NbgSkillCuratorLoopState = NbgSkillCuratorLoopState(),
+  skillCuratorSuggestionQueue: NbgSkillCuratorSuggestionQueue = NbgSkillCuratorSuggestionQueue(),
   skillDiffPreview: NbgSkillDiffPreview? = null,
   skillDiffFiles: List<NbgSkillDiffFile> = emptyList(),
   learnedDraftQueue: NbgLearnedSkillDraftQueue = NbgLearnedSkillDraftQueue(),
@@ -84,6 +85,8 @@ internal fun NbgSkillsScreen(
   onSetCuratorLoopEnabled: (Boolean) -> Unit = {},
   onSetCuratorLlmReviewEnabled: (Boolean) -> Unit = {},
   onRunCuratorLoopNow: () -> Unit = {},
+  onApproveCuratorSuggestion: (String) -> Unit = {},
+  onIgnoreCuratorSuggestion: (String) -> Unit = {},
   onPreviewCurrentSkillDiff: (String, String) -> Unit = { _, _ -> },
   onApplySkillDiffMerge: (Set<Int>) -> Unit = {},
   onCloseSkillDiffPreview: () -> Unit = {},
@@ -131,12 +134,15 @@ internal fun NbgSkillsScreen(
           summary = nbgBuildSkillCuratorSummary(rawSnapshot, skillCuratorMetadata),
           archivedSkills = archivedSkills,
           loopState = skillCuratorLoopState,
+          suggestionQueue = skillCuratorSuggestionQueue,
           busy = busyKey != null,
           onRestore = onRestoreSkill,
           onRunReview = onRunCuratorReview,
           onSetLoopEnabled = onSetCuratorLoopEnabled,
           onSetLlmReviewEnabled = onSetCuratorLlmReviewEnabled,
           onRunLoopNow = onRunCuratorLoopNow,
+          onApproveSuggestion = onApproveCuratorSuggestion,
+          onIgnoreSuggestion = onIgnoreCuratorSuggestion,
         )
       }
       item {
@@ -722,12 +728,15 @@ private fun NbgSkillCuratorCard(
   summary: NbgSkillCuratorSummary,
   archivedSkills: List<NbgSkillCuratorArchivedSkill>,
   loopState: NbgSkillCuratorLoopState,
+  suggestionQueue: NbgSkillCuratorSuggestionQueue,
   busy: Boolean,
   onRestore: (String) -> Unit,
   onRunReview: () -> Unit,
   onSetLoopEnabled: (Boolean) -> Unit,
   onSetLlmReviewEnabled: (Boolean) -> Unit,
   onRunLoopNow: () -> Unit,
+  onApproveSuggestion: (String) -> Unit,
+  onIgnoreSuggestion: (String) -> Unit,
 ) {
   Surface(
     modifier = Modifier.fillMaxWidth(),
@@ -798,13 +807,21 @@ private fun NbgSkillCuratorCard(
         )
       }
       Text(
-        text = "${loopState.statusLabel} · ${loopState.reviewCount} 次 · 已归档 ${loopState.archivedCount} · LLM ${loopState.lastLlmSuggestionCount} 条建议",
+        text = "${loopState.statusLabel} · ${loopState.reviewCount} 次 · 已归档 ${loopState.archivedCount} · LLM ${loopState.lastLlmSuggestionCount} 条建议 · 待处理 ${suggestionQueue.pendingCount}",
         color = if (loopState.lastError.isNotBlank()) NbgAgentColors.StatusRed else NbgAgentColors.TextMuted,
         fontSize = 11.sp,
         lineHeight = 15.sp,
         maxLines = 2,
         overflow = TextOverflow.Ellipsis,
       )
+      suggestionQueue.pendingEntries.take(3).forEach { suggestion ->
+        NbgSkillCuratorSuggestionRow(
+          suggestion = suggestion,
+          busy = busy,
+          onApprove = { onApproveSuggestion(suggestion.id) },
+          onIgnore = { onIgnoreSuggestion(suggestion.id) },
+        )
+      }
       if (summary.mostUsedSkillName.isNotBlank()) {
         Text(
           text = "最常用：${summary.mostUsedSkillName}",
@@ -832,6 +849,59 @@ private fun NbgSkillCuratorCard(
         fontSize = 11.sp,
         lineHeight = 15.sp,
       )
+    }
+  }
+}
+
+@Composable
+private fun NbgSkillCuratorSuggestionRow(
+  suggestion: NbgSkillCuratorSuggestionEntry,
+  busy: Boolean,
+  onApprove: () -> Unit,
+  onIgnore: () -> Unit,
+) {
+  Surface(
+    modifier = Modifier.fillMaxWidth(),
+    shape = RoundedCornerShape(12.dp),
+    color = NbgAgentColors.SurfaceLow,
+    border = BorderStroke(1.dp, NbgAgentColors.InputBorder),
+  ) {
+    Column(
+      modifier = Modifier.padding(horizontal = 9.dp, vertical = 8.dp),
+      verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+          Text(
+            text = "${suggestion.skillName} · ${suggestion.action}",
+            color = NbgAgentColors.TextStrong,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+          Text(
+            text = suggestion.reason.ifBlank { suggestion.patchHint }.ifBlank { "LLM curator suggestion" },
+            color = NbgAgentColors.TextMuted,
+            fontSize = 10.5.sp,
+            lineHeight = 14.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
+        NbgInlineActionButton(
+          label = "接受",
+          icon = Icons.Filled.CheckCircle,
+          enabled = !busy,
+          onClick = onApprove,
+        )
+        NbgInlineActionButton(
+          label = "忽略",
+          icon = Icons.Filled.Block,
+          enabled = !busy,
+          onClick = onIgnore,
+        )
+      }
     }
   }
 }
