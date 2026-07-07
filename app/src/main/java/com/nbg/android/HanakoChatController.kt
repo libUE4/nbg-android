@@ -53,6 +53,9 @@ class HanakoChatController(
   private val learnedSkillDraftStore = NbgLearnedSkillDraftStore(appContext)
   private val skillCuratorStore = NbgSkillCuratorStore(appContext)
   private val autonomousLearningEngine = NbgAutonomousLearningEngine(appContext)
+  private val memoryProviderManager = NbgMemoryProviderManager(appContext)
+  private val journeyMutations = NbgLearningJourneyMutations(appContext)
+  private val skillManage = NbgSkillManage(appContext)
   private val scheduleStore = NbgScheduleStore(appContext)
   private val gatewayInboxStore = NbgGatewayInboxStore(appContext)
 
@@ -407,6 +410,34 @@ class HanakoChatController(
     _state.update { it.copy(autonomousLearningSnapshot = snapshot) }
   }
 
+  fun editLearningJourneyNode(nodeId: String, content: String) {
+    val result = journeyMutations.editNode(nodeId, content)
+    if (!result.ok) {
+      _state.update { it.copy(lastError = result.message) }
+      return
+    }
+    loadAutonomousLearningSnapshot()
+  }
+
+  fun deleteLearningJourneyNode(nodeId: String) {
+    val result = journeyMutations.deleteNode(nodeId)
+    if (!result.ok) {
+      _state.update { it.copy(lastError = result.message) }
+      return
+    }
+    loadAutonomousLearningSnapshot()
+  }
+
+  fun applyLocalSkillManage(request: NbgSkillManageRequest) {
+    val result = skillManage.apply(request)
+    if (!result.ok) {
+      _state.update { it.copy(skillsError = result.message, lastError = result.message) }
+      return
+    }
+    loadLearnedSkillDraftQueue()
+    loadAutonomousLearningSnapshot()
+  }
+
   fun loadLearnedSkillDraftQueue() {
     _state.update { it.copy(learnedSkillDraftQueue = learnedSkillDraftStore.load()) }
   }
@@ -579,7 +610,7 @@ class HanakoChatController(
   }
 
   private fun learnFromUserTurn(prompt: String) {
-    val snapshot = autonomousLearningEngine.learnFromTurn(
+    val snapshot = memoryProviderManager.syncAll(
       NbgLearningSourceTurn(
         userText = prompt,
         sessionPath = _state.value.sessionPath.orEmpty(),
@@ -617,7 +648,7 @@ class HanakoChatController(
     val userText = activeLearningUserText
     val assistantText = activeLearningAssistantText.toString().nbgLearningTurnText(limit = 4_000)
     if (userText.isBlank() && assistantText.isBlank()) return
-    val snapshot = autonomousLearningEngine.learnFromTurn(
+    val snapshot = memoryProviderManager.syncAll(
       NbgLearningSourceTurn(
         userText = userText,
         assistantText = assistantText,
@@ -1770,6 +1801,21 @@ class HanakoChatController(
     val metadata = skillCuratorStore.restore(name)
     _state.update { state ->
       state.withSkillCuratorMetadata(metadata).copy(
+        skillsError = null,
+        lastError = null,
+      )
+    }
+  }
+
+  fun runSkillCuratorReview() {
+    val result = nbgRunSkillCuratorReview(
+      snapshot = _state.value.rawSkillsSnapshot,
+      drafts = learnedSkillDraftStore.load(),
+      metadata = skillCuratorStore.load(),
+    )
+    val saved = skillCuratorStore.save(result.metadata)
+    _state.update { state ->
+      state.withSkillCuratorMetadata(saved).copy(
         skillsError = null,
         lastError = null,
       )
@@ -3543,11 +3589,12 @@ class HanakoChatController(
       }
 
   private fun buildLearningContextForPrompt(prompt: String): JSONObject? {
-    val snapshot = autonomousLearningEngine.recall(
+    val prefetch = memoryProviderManager.prefetchAll(
       query = prompt,
       sessions = historyStore.readSummaryIndex(limit = 80),
       limit = 8,
     )
+    val snapshot = prefetch.snapshot
     val items = snapshot.recallBundle.items.take(8)
     if (items.isEmpty()) return null
     _state.update {

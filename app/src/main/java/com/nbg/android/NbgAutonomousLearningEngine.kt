@@ -1,6 +1,7 @@
 package com.nbg.android
 
 import android.content.Context
+import java.io.File
 
 internal const val NBG_AUTONOMOUS_LEARNING_ENGINE_VERSION = "nbg-autonomous-learning-engine-v1"
 
@@ -102,6 +103,7 @@ internal class NbgAutonomousLearningEngine(
   private val userProfileStore: NbgUserProfileStore,
   private val soulStore: NbgAgentSoulStore,
   private val learnedSkillDraftStore: NbgLearnedSkillDraftStore,
+  private val installedSkillRoot: File? = null,
 ) {
   constructor(context: Context) : this(
     auditStore = NbgLearningAuditStore(context),
@@ -109,6 +111,7 @@ internal class NbgAutonomousLearningEngine(
     userProfileStore = NbgUserProfileStore(context),
     soulStore = NbgAgentSoulStore(context),
     learnedSkillDraftStore = NbgLearnedSkillDraftStore(context),
+    installedSkillRoot = File(context.applicationContext.filesDir, "learned-skills"),
   )
 
   fun snapshot(settings: NbgLearningSettings = NbgLearningSettings()): NbgAutonomousLearningSnapshot {
@@ -124,7 +127,9 @@ internal class NbgAutonomousLearningEngine(
       userProfile = profile,
       soul = soul,
       learnedSkillDraftQueue = skillDrafts,
-      graph = nbgBuildLearningGraph(memory, profile, soul, skillDrafts),
+      graph = installedSkillRoot?.let { root ->
+        nbgBuildLearningGraph(memory, profile, soul, skillDrafts, nbgReadInstalledSkillNodes(root))
+      } ?: nbgBuildLearningGraph(memory, profile, soul, skillDrafts),
     )
   }
 

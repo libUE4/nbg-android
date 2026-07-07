@@ -1464,6 +1464,8 @@ fun NbgAndroidShell(
         onApproveEvent = { hanako.approveLearningEvent(it) },
         onRejectEvent = { hanako.rejectLearningEvent(it) },
         onRevertEvent = { hanako.revertLearningEvent(it) },
+        onEditJourneyNode = { id, content -> hanako.editLearningJourneyNode(id, content) },
+        onDeleteJourneyNode = { hanako.deleteLearningJourneyNode(it) },
         onOpenMemory = { shellState.showPage(NbgShellPage.Memory) },
         onOpenSkills = { shellState.showPage(NbgShellPage.Skills) },
       )
@@ -1493,6 +1495,7 @@ fun NbgAndroidShell(
         onRejectLearnedDraft = { hanako.rejectLearnedSkillDraft(it) },
         onArchiveSkill = { hanako.archiveSkill(it) },
         onRestoreSkill = { hanako.restoreArchivedSkill(it) },
+        onRunCuratorReview = { hanako.runSkillCuratorReview() },
       )
       NbgShellPage.Pets -> NbgPetsScreen(
         state = petUiState.petState,

@@ -17,12 +17,15 @@ This repository keeps Hermes as a product and architecture reference. It does no
 Implemented in the current Android architecture:
 
 - Autonomous learning core: `NbgLearningCandidate`, `NbgLearningReview`, `NbgLearningEvent`, `NbgLearningSettings`, `NbgLearningAuditStore`, and `NbgAutonomousLearningEngine`.
+- Memory provider manager v1: `NbgMemoryProviderManager` provides Hermes-style `prefetchAll`, `syncAll`, and `queuePrefetchAll` around Android local Memory/Profile/Soul/Skill/session recall without enabling third-party memory accounts by default.
 - Closed learning loop: Android now buffers the current user turn plus final assistant-visible answer, commits the full trajectory at turn end, and injects ranked `learningContext` recall into the next prompt `uiContext`.
 - Memory/User/Soul layers: local learning Memory mirror, `NbgUserProfileStore`, and `NbgAgentSoulStore`, all using local persistence and diagnostics redaction.
 - Learning UI: `NbgShellPage.Learning` renders audit events, learning graph stats, local Memory/Profile/Soul counts, Skill draft state, local cross-session Recall, Scheduled Automations, Gateway Inbox, and Trajectory Export status.
 - Skill learning safety: `/learn` and natural-language learning produce reviewed Skill draft queue entries; generated Skills are policy-reviewed and record local rollback metadata when auto-applied.
+- SkillManage v1: Android-local `NbgSkillManage` supports create/edit/patch/write_file/remove_file/delete for learned Skill artifacts inside app-private `learned-skills`, with rollback backups and path containment.
 - Skill self-improvement foundation: ended tool results can produce `SkillImprovement` candidates from task evidence and terminal failure/success signals; Low/Medium candidates can auto-apply into local Skill artifacts with previous-artifact hash/backup metadata, while High/Dangerous remain review-gated or blocked.
-- Cross-session Recall foundation: `NbgLearningRecallBundle` ranks local Memory, User Profile, Soul, Skill drafts, and redacted session-summary-index entries for the current query/session.
+- Learning Journey v1: Learning graph nodes can be edited/deleted from Android-local Memory/Profile/Soul/Skill draft/installed learned Skill stores.
+- Cross-session Recall foundation: `NbgLearningRecallBundle` ranks local Memory, User Profile, Soul, Skill drafts, installed learned Skill metadata, and redacted session-summary-index entries for the current query/session.
 - Scheduled Automations v1: `NbgScheduledAutomation`, `NbgSchedulePolicyReview`, `NbgScheduleRunEvent`, `NbgScheduleStore`, WorkManager periodic scanning, and a local-only runner that produces read-only report evidence while blocking confirmation-only shell work.
 - Gateway Inbox v1: `NbgInboundMessageSource`, `NbgGatewayInboxMessage`, `NbgGatewayPolicyReview`, `NbgGatewayInboxStore`, Android share-sheet ingestion, and local notification-reply ingestion into the Learning page.
 - Trajectory Export v1: `NbgTrajectoryExportPolicyReview`, `NbgTrajectoryExportBundle`, redacted messages, redacted tool events, task evidence bundles, learning events, and user-triggered local JSON sharing.
@@ -35,12 +38,12 @@ Implemented in the current Android architecture:
 | CLI/TUI with streaming tool output | Native Compose chat + tool cards + terminal previews | Implemented in Android-native UI |
 | Multi-provider model switching | URL API model/provider configuration | Implemented |
 | Toolsets and Doctor diagnostics | Toolsets / Doctor page with capability health | Implemented |
-| Persistent Memory | Local Memory UI + local learning Memory mirror | Implemented |
+| Persistent Memory | Local Memory UI + local learning Memory mirror + Android MemoryProvider manager v1 | Implemented v1 |
 | User profile / Soul | `NbgUserProfileStore` + `NbgAgentSoulStore` | Implemented |
 | Autonomous learning loop | Natural language markers, `/learn`, full-turn completion memory, audit log, policy review, prompt-time learning recall injection | Implemented |
-| Skills from experience | Learned Skill draft queue, evidence/hash/path/risk review, Low/Medium auto-apply, rollback metadata | Implemented v1 |
-| Skills improve during use | Tool-result-driven SkillImprovement candidates with Low/Medium auto-apply and rollback metadata | Implemented v1 |
-| Learning graph / journey | Memory/Profile/Soul/Skill graph with linked/isolated stats | Implemented v1 |
+| Skills from experience | Learned Skill draft queue, evidence/hash/path/risk review, Low/Medium auto-apply, rollback metadata, local SkillManage operations | Implemented v1 |
+| Skills improve during use | Tool-result-driven SkillImprovement candidates with Low/Medium auto-apply, rollback metadata, local patch/write-file support | Implemented v1 |
+| Learning graph / journey | Memory/Profile/Soul/Skill graph, editable/deletable Journey nodes, installed Skill related_skills links | Implemented v1 |
 | Past session search | Local redacted `session-summary-index.json` + remote merge | Implemented |
 | Cross-session recall | Local Recall ranks Memory/Profile/Soul/Skill/session hits | Implemented v1 |
 | Cron scheduling | WorkManager-backed local Scheduled Automations, run audit, and local-only read report runner | Implemented v1 |
@@ -68,9 +71,9 @@ Implemented in the current Android architecture:
 
 The current increment establishes stable local models, policy gates, persistence, tests, and Learning-page visibility. Deeper follow-up work remains:
 
-- Full promotion diff/merge UI for SkillImprovement drafts.
-- More granular rollback for applied learning events beyond audit status changes.
-- LLM-authored Skill merge/diff UI for upgrading an existing learned Skill instead of writing a sibling draft.
+- Optional third-party memory providers such as Honcho, mem0, or supermemory. Android has the provider-manager boundary, but no external account is enabled by default.
+- Full LLM-authored background review fork equivalent to Hermes desktop. Android currently has local curator review and SkillManage primitives, not an autonomous cloud/desktop review process.
+- Rich visual diff/merge UI for SkillImprovement drafts beyond the local patch/write-file primitives.
 
 ## Verification
 

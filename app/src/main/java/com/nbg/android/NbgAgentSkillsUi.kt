@@ -77,6 +77,7 @@ internal fun NbgSkillsScreen(
   onRejectLearnedDraft: (String) -> Unit = {},
   onArchiveSkill: (String) -> Unit = {},
   onRestoreSkill: (String) -> Unit = {},
+  onRunCuratorReview: () -> Unit = {},
 ) {
   var addOpen by remember { mutableStateOf(false) }
   var deleteTarget by remember { mutableStateOf<HanakoSkillSummary?>(null) }
@@ -122,6 +123,7 @@ internal fun NbgSkillsScreen(
           archivedSkills = archivedSkills,
           busy = busyKey != null,
           onRestore = onRestoreSkill,
+          onRunReview = onRunCuratorReview,
         )
       }
       item {
@@ -487,6 +489,7 @@ private fun NbgSkillCuratorCard(
   archivedSkills: List<NbgSkillCuratorArchivedSkill>,
   busy: Boolean,
   onRestore: (String) -> Unit,
+  onRunReview: () -> Unit,
 ) {
   Surface(
     modifier = Modifier.fillMaxWidth(),
@@ -530,6 +533,12 @@ private fun NbgSkillCuratorCard(
         NbgSkillCuratorMetric("已归档", summary.archivedCount, Modifier.weight(1f))
         NbgSkillCuratorMetric("使用记录", summary.usageEventCount, Modifier.weight(1f))
       }
+      NbgInlineActionButton(
+        label = "运行复核",
+        icon = Icons.Filled.Refresh,
+        enabled = !busy,
+        onClick = onRunReview,
+      )
       if (summary.mostUsedSkillName.isNotBlank()) {
         Text(
           text = "最常用：${summary.mostUsedSkillName}",

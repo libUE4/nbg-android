@@ -23,9 +23,16 @@ import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -55,9 +62,14 @@ internal fun NbgAutonomousLearningScreen(
   onApproveEvent: (String) -> Unit,
   onRejectEvent: (String) -> Unit,
   onRevertEvent: (String) -> Unit,
+  onEditJourneyNode: (String, String) -> Unit,
+  onDeleteJourneyNode: (String) -> Unit,
   onOpenMemory: () -> Unit,
   onOpenSkills: () -> Unit,
 ) {
+  var editTarget by remember { mutableStateOf<NbgLearningGraphNode?>(null) }
+  var editText by remember { mutableStateOf("") }
+  var deleteTarget by remember { mutableStateOf<NbgLearningGraphNode?>(null) }
   NbgShellSubPage(
     title = "Learning",
     subtitle = "Hermes 风格自主学习 · 本地审计",
@@ -75,7 +87,15 @@ internal fun NbgAutonomousLearningScreen(
         NbgLearningOverviewCard(snapshot = snapshot, onReload = onReload)
       }
       item {
-        NbgLearningGraphCard(snapshot.graph, onBuildRecall = onBuildRecall)
+        NbgLearningGraphCard(
+          graph = snapshot.graph,
+          onBuildRecall = onBuildRecall,
+          onEditNode = { node ->
+            editTarget = node
+            editText = node.subtitle.ifBlank { node.title }
+          },
+          onDeleteNode = { node -> deleteTarget = node },
+        )
       }
       item {
         NbgLearningRecallCard(snapshot.recallBundle)
@@ -127,6 +147,49 @@ internal fun NbgAutonomousLearningScreen(
         }
       }
     }
+  }
+  editTarget?.let { node ->
+    AlertDialog(
+      onDismissRequest = { editTarget = null },
+      title = { Text("编辑学习节点") },
+      text = {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          Text(node.id, color = NbgAgentColors.TextMuted, fontSize = 11.sp)
+          OutlinedTextField(
+            value = editText,
+            onValueChange = { editText = it },
+            minLines = 4,
+            maxLines = 10,
+            modifier = Modifier.fillMaxWidth(),
+          )
+        }
+      },
+      confirmButton = {
+        TextButton(onClick = {
+          onEditJourneyNode(node.id, editText)
+          editTarget = null
+        }) { Text("保存") }
+      },
+      dismissButton = {
+        TextButton(onClick = { editTarget = null }) { Text("取消") }
+      },
+    )
+  }
+  deleteTarget?.let { node ->
+    AlertDialog(
+      onDismissRequest = { deleteTarget = null },
+      title = { Text("删除学习节点") },
+      text = { Text("${node.id}\n删除后会从本地 Journey 来源移除或归档。") },
+      confirmButton = {
+        TextButton(onClick = {
+          onDeleteJourneyNode(node.id)
+          deleteTarget = null
+        }) { Text("删除") }
+      },
+      dismissButton = {
+        TextButton(onClick = { deleteTarget = null }) { Text("取消") }
+      },
+    )
   }
 }
 
@@ -371,6 +434,8 @@ private fun NbgLearningOverviewCard(
 private fun NbgLearningGraphCard(
   graph: NbgLearningGraph,
   onBuildRecall: () -> Unit,
+  onEditNode: (NbgLearningGraphNode) -> Unit,
+  onDeleteNode: (NbgLearningGraphNode) -> Unit,
 ) {
   NbgLearningCard {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -404,6 +469,28 @@ private fun NbgLearningGraphCard(
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
       )
+    }
+    graph.nodes.take(5).forEach { node ->
+      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.weight(1f)) {
+          Text(
+            text = node.title,
+            color = NbgAgentColors.TextStrong,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+          Text(
+            text = "${node.kind} · ${node.state.ifBlank { "active" }}",
+            color = NbgAgentColors.TextMuted,
+            fontSize = 10.5.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
+        NbgSmallIconAction(Icons.Filled.Refresh, "编辑学习节点") { onEditNode(node) }
+        NbgSmallIconAction(Icons.Filled.Close, "删除学习节点") { onDeleteNode(node) }
+      }
     }
   }
 }

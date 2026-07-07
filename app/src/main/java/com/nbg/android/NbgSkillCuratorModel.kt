@@ -56,6 +56,22 @@ data class NbgSkillCuratorArchivedSkill(
   val useCount: Int,
 )
 
+data class NbgSkillCuratorReviewAction(
+  val skillName: String,
+  val action: String,
+  val reason: String,
+  val safeToAutoArchive: Boolean,
+)
+
+data class NbgSkillCuratorReviewResult(
+  val actions: List<NbgSkillCuratorReviewAction>,
+  val metadata: NbgSkillCuratorMetadata,
+  val reviewedAtMs: Long,
+) {
+  val archivedCount: Int
+    get() = actions.count { it.action == "archive" && it.safeToAutoArchive }
+}
+
 internal fun nbgBuildSkillCuratorSummary(
   snapshot: HanakoSkillsSnapshot,
   metadata: NbgSkillCuratorMetadata = NbgSkillCuratorMetadata(),
@@ -125,6 +141,36 @@ internal fun nbgSkillCuratorArchivedSkills(
       compareByDescending<NbgSkillCuratorArchivedSkill> { it.archivedAtMs }
         .thenBy { it.skillName.lowercase() },
     )
+}
+
+internal fun nbgRunSkillCuratorReview(
+  snapshot: HanakoSkillsSnapshot,
+  drafts: NbgLearnedSkillDraftQueue,
+  metadata: NbgSkillCuratorMetadata,
+  nowMs: Long = System.currentTimeMillis(),
+): NbgSkillCuratorReviewResult {
+  var next = metadata
+  val draftNames = drafts.visibleEntries
+    .filter { it.autoInstalled || it.status == NbgLearnedSkillDraftStatus.AutoApplied }
+    .map { it.skillName }
+    .toSet()
+  val actions = snapshot.visibleSkills.mapNotNull { skill ->
+    if (skill.enabled || skill.source == "builtin" || skill.source == "external" || skill.readonly) return@mapNotNull null
+    if (skill.name !in draftNames && !skill.filePath.contains("learned-skills")) return@mapNotNull null
+    val stats = metadata.statsFor(skill.name)
+    if (stats?.archived == true) return@mapNotNull null
+    val useCount = stats?.useCount ?: 0
+    if (useCount > 0) return@mapNotNull null
+    val reason = "curator_review_unused_learned_skill"
+    next = nbgArchiveSkillCuratorEntry(next, skill.name, reason = reason, nowMs = nowMs)
+    NbgSkillCuratorReviewAction(
+      skillName = skill.name,
+      action = "archive",
+      reason = reason,
+      safeToAutoArchive = true,
+    )
+  }
+  return NbgSkillCuratorReviewResult(actions = actions, metadata = next, reviewedAtMs = nowMs.coerceAtLeast(0L))
 }
 
 internal fun nbgBuildSkillCuratorMetadata(
