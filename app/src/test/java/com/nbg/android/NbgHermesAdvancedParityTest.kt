@@ -206,6 +206,26 @@ class NbgHermesAdvancedParityTest {
   }
 
   @Test
+  fun urlApiHeadersAvoidDuplicateAuthorizationForStrictGateways() {
+    val openAiHeaders = nbgUrlApiHeaderPairs("secret", nbgDefaultModelProviderProfiles().first { it.id == "openai" })
+    val xApiKeyProfile = NbgModelProviderProfile(
+      id = "nbgapi",
+      label = "NBG API",
+      baseUrlHint = "nbgapi.com",
+      authHeader = "x-api-key",
+      authPrefix = "",
+    )
+    val xApiKeyHeaders = nbgUrlApiHeaderPairs("secret", xApiKeyProfile)
+
+    assertEquals(1, openAiHeaders.count { it.first.equals("Authorization", ignoreCase = true) })
+    assertEquals(1, openAiHeaders.count { it.first.equals("x-api-key", ignoreCase = true) })
+    assertEquals("Bearer secret", openAiHeaders.first { it.first.equals("Authorization", ignoreCase = true) }.second)
+    assertEquals(1, xApiKeyHeaders.count { it.first.equals("Authorization", ignoreCase = true) })
+    assertEquals(1, xApiKeyHeaders.count { it.first.equals("x-api-key", ignoreCase = true) })
+    assertEquals("secret", xApiKeyHeaders.first { it.first.equals("x-api-key", ignoreCase = true) }.second)
+  }
+
+  @Test
   fun contextInsightsSummarizeUsageLearningAndCompressionAdvice() {
     val insights = nbgBuildContextInsights(
       usage = NbgContextUsageSnapshot(totalTokens = 80_000, contextLimit = 100_000, percentUsed = 80, compressionAvailable = true),
@@ -252,12 +272,35 @@ class NbgHermesAdvancedParityTest {
         .put("reviewCount", 2)
         .put("archivedCount", 1)
         .put("lastActionCount", 1)
+        .put(
+          "runHistory",
+          JSONArray()
+            .put(
+              JSONObject()
+                .put("kind", "llm")
+                .put("ok", true)
+                .put("ranAtMs", 2000)
+                .put("suggestionCount", 2)
+                .put("message", "merge duplicate skills"),
+            )
+            .put(
+              JSONObject()
+                .put("kind", "review")
+                .put("ok", false)
+                .put("ranAtMs", 1000)
+                .put("message", "boom"),
+            ),
+        )
         .toString(),
     )
 
     assertTrue(state.enabled)
     assertEquals(2, state.reviewCount)
     assertEquals("后台复核待运行", state.statusLabel)
+    assertEquals(2, state.runHistory.size)
+    assertEquals("llm", state.runHistory.first().kind)
+    assertEquals(2, state.runHistory.first().suggestionCount)
+    assertEquals(false, state.runHistory.last().ok)
   }
 
   @Test

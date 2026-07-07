@@ -550,6 +550,22 @@ private fun NbgMemoryProviderPluginsCard(
               maxLines = 1,
               overflow = TextOverflow.Ellipsis,
             )
+            Text(
+              text = nbgExternalMemoryProviderAccountMeta(provider),
+              color = NbgAgentColors.TextMuted,
+              fontSize = 10.sp,
+              maxLines = 2,
+              overflow = TextOverflow.Ellipsis,
+            )
+            if (provider.lastError.isNotBlank()) {
+              Text(
+                text = "最近错误：${provider.lastError}",
+                color = NbgAgentColors.StatusRed,
+                fontSize = 10.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+              )
+            }
           }
           NbgInlineActionButton(label = "配置", icon = Icons.Filled.Memory, onClick = { onConfigure(provider) })
           NbgInlineActionButton(
@@ -563,6 +579,20 @@ private fun NbgMemoryProviderPluginsCard(
     }
   }
 }
+
+private fun nbgExternalMemoryProviderAccountMeta(provider: NbgExternalMemoryProviderConfig): String =
+  listOfNotNull(
+    provider.accountLabel.takeIf { it.isNotBlank() }?.let { "账号 $it" },
+    provider.userId.takeIf { it.isNotBlank() }?.let { "user $it" },
+    provider.agentId.takeIf { it.isNotBlank() }?.let { "agent $it" },
+    provider.prefetchPath.takeIf { it.isNotBlank() }?.let { "prefetch $it" },
+    provider.syncPath.takeIf { it.isNotBlank() }?.let { "sync $it" },
+    provider.lastPrefetchAtMs.takeIf { it > 0L }?.let { "预取 ${nbgCompactTimestamp(it)}" },
+    provider.lastSyncAtMs.takeIf { it > 0L }?.let { "同步 ${nbgCompactTimestamp(it)}" },
+  ).joinToString(" · ").ifBlank { "未绑定账号 · 同步日志待生成" }
+
+private fun nbgCompactTimestamp(value: Long): String =
+  java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.US).format(java.util.Date(value))
 
 private fun nbgHighlightedFtsText(text: String, terms: List<String>) =
   buildAnnotatedString {

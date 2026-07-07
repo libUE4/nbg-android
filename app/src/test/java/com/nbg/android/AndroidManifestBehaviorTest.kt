@@ -135,6 +135,7 @@ class AndroidManifestBehaviorTest {
         "NbgAgentSkillsUi.kt",
         "NbgAgentCapabilityPagesUi.kt",
         "NbgAgentUrlApiUi.kt",
+        "NbgAgentSlashCommandUi.kt",
         "NbgAppearanceUi.kt",
         "NbgAgentDialogs.kt",
         "NbgAgentMessageUi.kt",
@@ -949,6 +950,10 @@ class AndroidManifestBehaviorTest {
     assertFalse(agentUi.contains("openPermissionModeRequest"))
     assertFalse(agentUi.contains("openThinkingLevelRequest"))
     assertFalse(agentUi.contains("openSlashCommandsRequest"))
+    assertTrue(agentUi.contains("slashCommandDialogOpen"))
+    assertTrue(agentUi.contains("openSlashCommandCenter()"))
+    assertTrue(agentUi.contains("refreshSlashCommandCenter()"))
+    assertTrue(agentUi.contains("runSlashCommandCenterCommand(command: String)"))
     assertFalse(agentUi.contains("openWorkspaceFilesRequest"))
     assertFalse(agentUi.contains("openFileShareRequest"))
     assertFalse(agentUi.contains("thinkingPreviewRequest"))
@@ -3133,7 +3138,12 @@ class AndroidManifestBehaviorTest {
     assertFalse(agentUi.contains("onOpenModel = onShowAgentModelConfig"))
     assertFalse(agentUi.contains("onOpenPermissionSettings = {"))
     assertFalse(agentUi.contains("onOpenThinkingSettings = {"))
-    assertFalse(agentUi.contains("NbgSlashCommandDialog"))
+    assertTrue(agentUi.contains("NbgSlashCommandDialog("))
+    assertTrue(agentUi.contains("nbgAndroidSlashCommandShortcuts"))
+    assertTrue(agentUi.contains("Slash command center"))
+    assertTrue(agentUi.contains("NbgSlashCommandShortcut(\"/model\""))
+    assertTrue(agentUi.contains("NbgSlashCommandShortcut(\"/provider\""))
+    assertTrue(agentUi.contains("\"/compress\""))
     assertFalse(agentUi.contains("NbgToolIcon(Icons.Filled.AutoAwesome, \"模型\", onClick = onOpenModel)"))
     assertFalse(agentUi.contains("Icons.Filled.Terminal, \"命令\""))
     assertFalse(agentUi.contains("Icons.Filled.Search, \"搜索\""))
@@ -3406,10 +3416,11 @@ class AndroidManifestBehaviorTest {
     assertTrue(agentUi.contains("val selectedVerifiedModelId = apiEditor.selectedVerifiedModelId()"))
     assertTrue(apiEditorState.contains(".takeIf { it in verifiedModelIds }"))
     assertTrue(agentUi.contains("selectedModelId = selectedVerifiedModelId"))
-    assertTrue(apiStore.contains("addHeader(\"Authorization\", \"Bearer \$apiKey\")"))
-    assertTrue(apiStore.contains("addHeader(\"x-api-key\", apiKey)"))
-    assertTrue(apiStore.contains("addHeader(\"anthropic-version\", \"2023-06-01\")"))
-    assertTrue(apiStore.contains(".header(\"User-Agent\", NBG_UPSTREAM_USER_AGENT)"))
+    assertTrue(apiStore.contains("fun nbgUrlApiHeaderPairs("))
+    assertTrue(apiStore.contains("!customHeader.equals(\"Authorization\", ignoreCase = true)"))
+    assertTrue(apiStore.contains("!customHeader.equals(\"x-api-key\", ignoreCase = true)"))
+    assertTrue(apiStore.contains("add(\"anthropic-version\" to \"2023-06-01\")"))
+    assertTrue(apiStore.contains("header(\"User-Agent\", NBG_UPSTREAM_USER_AGENT)"))
     assertTrue(apiStore.contains("NBG_UPSTREAM_USER_AGENT = \"NBG-Android/1.0\""))
     assertTrue(apiStore.contains("nbgMaskedApiKey"))
     assertTrue(modelProfiles.contains("class NbgModelProviderProfileTemplateStore(context: Context)"))

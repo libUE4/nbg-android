@@ -56,7 +56,38 @@ data class NbgUrlApiTextGenerationResult(
   val ok: Boolean,
   val text: String,
   val message: String,
+  val inputTokens: Long = 0L,
+  val outputTokens: Long = 0L,
+  val totalTokens: Long = 0L,
+  val latencyMs: Long = 0L,
 )
+
+data class NbgUrlApiEndpointDiagnostic(
+  val label: String,
+  val method: String,
+  val url: String,
+  val httpStatus: Int = 0,
+  val ok: Boolean = false,
+  val latencyMs: Long = 0L,
+  val message: String = "",
+  val bodyPreview: String = "",
+)
+
+data class NbgUrlApiRequestDiagnostics(
+  val baseUrl: String,
+  val profileId: String,
+  val profileLabel: String,
+  val apiMode: String,
+  val modelsEndpoint: String,
+  val chatEndpoint: String,
+  val authHeaderNames: List<String>,
+  val duplicateAuthorization: Boolean,
+  val duplicateXApiKey: Boolean,
+  val endpoints: List<NbgUrlApiEndpointDiagnostic> = emptyList(),
+) {
+  val hasHeaderConflict: Boolean
+    get() = duplicateAuthorization || duplicateXApiKey
+}
 
 internal interface NbgApiKeySecretStore {
   fun loadApiKey(entryId: String): String?
@@ -406,6 +437,35 @@ class NbgUpstreamApiClient {
       NbgApiModelVerifyResult(false, "验证失败：$lastError")
     }
 
+  suspend fun diagnoseUrlApi(
+    baseUrl: String,
+    apiKey: String,
+    modelId: String,
+    providerProfiles: List<NbgModelProviderProfile> = emptyList(),
+  ): NbgUrlApiRequestDiagnostics =
+    withContext(Dispatchers.IO) {
+      val base = nbgBuildUrlApiRequestDiagnostics(baseUrl, apiKey, modelId, providerProfiles)
+      val normalized = base.baseUrl
+      val profile = nbgProfileForUrlApi(normalized, modelId, providerProfiles)
+      if (normalized.isBlank() || apiKey.isBlank()) {
+        return@withContext base.copy(
+          endpoints = listOf(
+            NbgUrlApiEndpointDiagnostic(
+              label = "准备",
+              method = "-",
+              url = normalized,
+              message = "地址和 API Key 不能为空",
+            ),
+          ),
+        )
+      }
+      val endpoints = buildList {
+        add(runModelsDiagnostic(base.modelsEndpoint, apiKey, profile))
+        add(runChatDiagnostic(base.chatEndpoint, apiKey, modelId, profile))
+      }
+      base.copy(endpoints = endpoints)
+    }
+
   suspend fun translateSkillDescriptions(
     entry: NbgStoredApi,
     model: NbgApiModel,
@@ -434,6 +494,7 @@ class NbgUpstreamApiClient {
       }
       var lastError = ""
       for (url in candidates) {
+        val startedAt = System.currentTimeMillis()
         val body = if (provider == "anthropic") {
           JSONObject()
             .put("model", model.id)
@@ -493,6 +554,7 @@ class NbgUpstreamApiClient {
       if (normalized.isBlank() || entry.apiKey.isBlank() || model.id.isBlank() || cleanPrompt.isBlank()) {
         return@withContext NbgUrlApiTextGenerationResult(false, "", "没有可用的 URL API 模型或评审问题")
       }
+      val startedAt = System.currentTimeMillis()
       val profile = nbgProfileForUrlApi(normalized, model.id, providerProfiles)
       val provider = profile.apiMode.ifBlank { nbgHanakoProviderForUrlApi(normalized, model.id) }
       val candidates = if (provider == "anthropic") {
@@ -537,7 +599,16 @@ class NbgUpstreamApiClient {
             }
             val text = nbgParseProbeText(raw, if (provider == "anthropic") "Anthropic" else "OpenAI")
             if (text.isNotBlank()) {
-              return@withContext NbgUrlApiTextGenerationResult(true, text.take(12_000), "完成")
+              val tokens = nbgParseUrlApiUsageTokens(raw)
+              return@withContext NbgUrlApiTextGenerationResult(
+                ok = true,
+                text = text.take(12_000),
+                message = "完成",
+                inputTokens = tokens.first,
+                outputTokens = tokens.second,
+                totalTokens = tokens.third,
+                latencyMs = System.currentTimeMillis() - startedAt,
+              )
             }
             lastError = "模型没有返回文本"
           }
@@ -548,13 +619,126 @@ class NbgUpstreamApiClient {
       NbgUrlApiTextGenerationResult(false, "", "生成失败：$lastError")
     }
 
-  private fun Request.Builder.addApiHeaders(apiKey: String, profile: NbgModelProviderProfile = nbgDefaultModelProviderProfiles().first { it.id == "openai" }): Request.Builder =
-    addHeader(profile.authHeader.ifBlank { "Authorization" }, "${profile.authPrefix}$apiKey".trim())
-      .addHeader("Authorization", "Bearer $apiKey")
-      .addHeader("x-api-key", apiKey)
-      .addHeader("anthropic-version", "2023-06-01")
-      .header("User-Agent", NBG_UPSTREAM_USER_AGENT)
+  private fun Request.Builder.addApiHeaders(
+    apiKey: String,
+    profile: NbgModelProviderProfile = nbgDefaultModelProviderProfiles().first { it.id == "openai" },
+  ): Request.Builder {
+    nbgUrlApiHeaderPairs(apiKey, profile).forEach { (name, value) ->
+      addHeader(name, value)
+    }
+    return header("User-Agent", NBG_UPSTREAM_USER_AGENT)
       .addHeader("Content-Type", "application/json")
+  }
+
+  private fun runModelsDiagnostic(
+    url: String,
+    apiKey: String,
+    profile: NbgModelProviderProfile,
+  ): NbgUrlApiEndpointDiagnostic {
+    if (url.isBlank()) {
+      return NbgUrlApiEndpointDiagnostic("models", "GET", url, message = "models endpoint 为空")
+    }
+    val startedAt = System.currentTimeMillis()
+    return runCatching {
+      val request = Request.Builder()
+        .url(url)
+        .addApiHeaders(apiKey, profile)
+        .get()
+        .build()
+      client.newCall(request).execute().use { response ->
+        val raw = response.body?.string().orEmpty()
+        val latency = System.currentTimeMillis() - startedAt
+        val models = if (response.isSuccessful) nbgParseApiModels(raw) else emptyList()
+        NbgUrlApiEndpointDiagnostic(
+          label = "models",
+          method = "GET",
+          url = url,
+          httpStatus = response.code,
+          ok = response.isSuccessful && models.isNotEmpty(),
+          latencyMs = latency,
+          message = if (response.isSuccessful) {
+            if (models.isNotEmpty()) "HTTP ${response.code} · ${models.size} models" else "HTTP ${response.code} · 没有解析到模型"
+          } else {
+            "HTTP ${response.code}: ${nbgCompactApiError(raw)}"
+          },
+          bodyPreview = raw.nbgDiagnosticPreview(),
+        )
+      }
+    }.getOrElse { error ->
+      NbgUrlApiEndpointDiagnostic(
+        label = "models",
+        method = "GET",
+        url = url,
+        latencyMs = System.currentTimeMillis() - startedAt,
+        message = error.message.orEmpty().ifBlank { error::class.java.simpleName },
+      )
+    }
+  }
+
+  private fun runChatDiagnostic(
+    url: String,
+    apiKey: String,
+    modelId: String,
+    profile: NbgModelProviderProfile,
+  ): NbgUrlApiEndpointDiagnostic {
+    val cleanModel = modelId.trim()
+    if (cleanModel.isBlank()) {
+      return NbgUrlApiEndpointDiagnostic(
+        label = "chat",
+        method = "POST",
+        url = url,
+        message = "未选择模型，跳过 chat 测试",
+      )
+    }
+    if (url.isBlank()) {
+      return NbgUrlApiEndpointDiagnostic("chat", "POST", url, message = "chat endpoint 为空")
+    }
+    val startedAt = System.currentTimeMillis()
+    val provider = profile.apiMode.ifBlank { "openai" }
+    val body = if (provider == "anthropic") {
+      nbgAnthropicProbeBody(cleanModel)
+    } else {
+      profile.applyExtraBody(nbgOpenAiProbeBodies(cleanModel).first())
+    }
+    return runCatching {
+      val request = Request.Builder()
+        .url(url)
+        .addApiHeaders(apiKey, profile)
+        .post(body.toString().toRequestBody(JSON))
+        .build()
+      client.newCall(request).execute().use { response ->
+        val raw = response.body?.string().orEmpty()
+        val latency = System.currentTimeMillis() - startedAt
+        val text = if (response.isSuccessful) {
+          runCatching { nbgParseProbeText(raw, if (provider == "anthropic") "Anthropic" else "OpenAI") }.getOrDefault("")
+        } else {
+          ""
+        }
+        NbgUrlApiEndpointDiagnostic(
+          label = "chat",
+          method = "POST",
+          url = url,
+          httpStatus = response.code,
+          ok = response.isSuccessful && text.isNotBlank(),
+          latencyMs = latency,
+          message = if (response.isSuccessful) {
+            if (text.isNotBlank()) "HTTP ${response.code} · 返回文本" else "HTTP ${response.code} · 未解析到文本"
+          } else {
+            "HTTP ${response.code}: ${nbgCompactApiError(raw)}"
+          },
+          bodyPreview = raw.nbgDiagnosticPreview(),
+        )
+      }
+    }.getOrElse { error ->
+      NbgUrlApiEndpointDiagnostic(
+        label = "chat",
+        method = "POST",
+        url = url,
+        latencyMs = System.currentTimeMillis() - startedAt,
+        message = error.message.orEmpty().ifBlank { error::class.java.simpleName },
+      )
+    }
+  }
 
   private data class NbgApiProbe(
     val wire: String,
@@ -569,6 +753,61 @@ class NbgUpstreamApiClient {
     const val NBG_UPSTREAM_USER_AGENT = "NBG-Android/1.0"
   }
 }
+
+internal fun nbgUrlApiHeaderPairs(
+  apiKey: String,
+  profile: NbgModelProviderProfile = nbgDefaultModelProviderProfiles().first { it.id == "openai" },
+): List<Pair<String, String>> {
+  val key = apiKey.trim()
+  val customHeader = profile.authHeader.ifBlank { "Authorization" }
+  val customValue = "${profile.authPrefix}$key".trim()
+  return buildList {
+    if (key.isNotBlank()) {
+      add(customHeader to customValue)
+      if (!customHeader.equals("Authorization", ignoreCase = true)) add("Authorization" to "Bearer $key")
+      if (!customHeader.equals("x-api-key", ignoreCase = true)) add("x-api-key" to key)
+    }
+    add("anthropic-version" to "2023-06-01")
+  }
+}
+
+internal fun nbgBuildUrlApiRequestDiagnostics(
+  baseUrl: String,
+  apiKey: String,
+  modelId: String = "",
+  providerProfiles: List<NbgModelProviderProfile> = emptyList(),
+): NbgUrlApiRequestDiagnostics {
+  val normalized = nbgNormalizeApiBaseUrl(baseUrl)
+  val profile = nbgProfileForUrlApi(normalized, modelId, providerProfiles)
+  val provider = profile.apiMode.ifBlank { nbgHanakoProviderForUrlApi(normalized, modelId).ifBlank { "openai" } }
+  val headers = nbgUrlApiHeaderPairs(apiKey, profile).map { it.first }
+  val chatEndpoint = if (provider == "anthropic") {
+    profile.chatEndpoint(normalized).takeIf { profile.apiMode == "anthropic" }
+      ?: nbgApiEndpoint(normalized, "/v1/messages")
+  } else {
+    profile.chatEndpoint(normalized)
+  }
+  return NbgUrlApiRequestDiagnostics(
+    baseUrl = normalized,
+    profileId = profile.id,
+    profileLabel = profile.label,
+    apiMode = provider,
+    modelsEndpoint = profile.modelsEndpoint(normalized),
+    chatEndpoint = chatEndpoint,
+    authHeaderNames = headers.distinctBy { it.lowercase() },
+    duplicateAuthorization = headers.hasDuplicateHeader("Authorization"),
+    duplicateXApiKey = headers.hasDuplicateHeader("x-api-key"),
+  )
+}
+
+private fun List<String>.hasDuplicateHeader(name: String): Boolean =
+  count { it.equals(name, ignoreCase = true) } > 1
+
+private fun String.nbgDiagnosticPreview(): String =
+  replace('\n', ' ')
+    .replace('\r', ' ')
+    .replace(Regex("\\s+"), " ")
+    .take(360)
 
 private fun buildSkillDescriptionTranslationPrompt(targets: List<Pair<String, String>>): String {
   val items = JSONObject().apply {
@@ -647,6 +886,15 @@ internal fun nbgParseApiModels(raw: String): List<NbgApiModel> =
       }
     }.distinctBy { it.id }.sortedBy { it.id.lowercase() }
   }.getOrDefault(emptyList())
+
+internal fun nbgParseUrlApiUsageTokens(raw: String): Triple<Long, Long, Long> =
+  runCatching {
+    val usage = JSONObject(raw.ifBlank { "{}" }).optJSONObject("usage") ?: JSONObject()
+    val input = usage.optLong("prompt_tokens", usage.optLong("input_tokens", usage.optLong("inputTokens", 0L))).coerceAtLeast(0L)
+    val output = usage.optLong("completion_tokens", usage.optLong("output_tokens", usage.optLong("outputTokens", 0L))).coerceAtLeast(0L)
+    val total = usage.optLong("total_tokens", usage.optLong("totalTokens", input + output)).coerceAtLeast(input + output)
+    Triple(input, output, total)
+  }.getOrDefault(Triple(0L, 0L, 0L))
 
 internal fun JSONObject?.nbgModelContextWindow(modelId: String = ""): Long {
   if (this == null) return nbgFallbackContextWindowForModel(modelId)

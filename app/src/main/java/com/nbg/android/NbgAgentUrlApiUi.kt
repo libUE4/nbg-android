@@ -256,6 +256,8 @@ internal fun NbgUrlApiScreen(
   providerProfileTemplateText: String = "",
   providerProfileMessage: String = "",
   editableProviderProfileIds: Set<String> = emptySet(),
+  providerProfileDiagnostics: Map<String, NbgUrlApiRequestDiagnostics> = emptyMap(),
+  usageCostState: NbgUsageCostState = NbgUsageCostState(),
   expertReviewPrompt: String,
   expertReviewSelectedKeys: Set<String>,
   expertReviewRunning: Boolean,
@@ -276,6 +278,7 @@ internal fun NbgUrlApiScreen(
   onClearProviderProfiles: () -> Unit = {},
   onSaveProviderProfile: (String, NbgModelProviderProfile) -> Unit = { _, _ -> },
   onDeleteProviderProfile: (String) -> Unit = {},
+  onTestProviderProfile: (NbgModelProviderProfile) -> Unit = {},
 ) {
   Box(
     modifier = Modifier
@@ -346,12 +349,14 @@ internal fun NbgUrlApiScreen(
             templateText = providerProfileTemplateText,
             message = providerProfileMessage,
             editableProfileIds = editableProviderProfileIds,
+            diagnosticsByProfileId = providerProfileDiagnostics,
             onTemplateChange = onProviderProfileTemplateChange,
             onImport = onImportProviderProfiles,
             onExport = onExportProviderProfiles,
             onClear = onClearProviderProfiles,
             onSaveProfile = onSaveProviderProfile,
             onDeleteProfile = onDeleteProviderProfile,
+            onTestProfile = onTestProviderProfile,
           )
         }
         item {
@@ -367,6 +372,9 @@ internal fun NbgUrlApiScreen(
             onRun = onRunExpertReview,
             onCancel = onCancelExpertReview,
           )
+        }
+        item {
+          NbgUrlApiUsageCostCard(usageCostState)
         }
         if (entries.isEmpty()) {
           item {
@@ -387,17 +395,103 @@ internal fun NbgUrlApiScreen(
 }
 
 @Composable
+private fun NbgUrlApiUsageCostCard(
+  state: NbgUsageCostState,
+) {
+  Surface(
+    modifier = Modifier.fillMaxWidth(),
+    shape = RoundedCornerShape(16.dp),
+    color = NbgAgentColors.Drawer,
+    border = BorderStroke(1.dp, NbgAgentColors.InputBorder),
+  ) {
+    Column(
+      modifier = Modifier.padding(horizontal = 13.dp, vertical = 12.dp),
+      verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Icon(
+          imageVector = Icons.Filled.History,
+          contentDescription = null,
+          tint = NbgAgentColors.Primary,
+          modifier = Modifier.size(18.dp),
+        )
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+          Text(
+            text = "模型用量",
+            color = NbgAgentColors.TextStrong,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+          )
+          Text(
+            text = "${state.totalTokens} tokens · $${String.format(java.util.Locale.US, "%.4f", state.estimatedCostUsd)} · ${state.failureCount} 次失败",
+            color = NbgAgentColors.TextMuted,
+            fontSize = 11.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
+      }
+      val models = state.modelBreakdowns.take(4)
+      if (models.isEmpty()) {
+        Text(
+          text = "暂无 URL API 用量记录",
+          color = NbgAgentColors.TextMuted,
+          fontSize = 11.sp,
+        )
+      } else {
+        models.forEach { breakdown ->
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
+            Text(
+              text = breakdown.label,
+              color = NbgAgentColors.TextStrong,
+              fontSize = 12.sp,
+              fontWeight = FontWeight.SemiBold,
+              modifier = Modifier.weight(0.38f),
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+              text = "${breakdown.totalTokens} tok · ${breakdown.averageLatencyMs}ms",
+              color = NbgAgentColors.TextMuted,
+              fontSize = 10.5.sp,
+              modifier = Modifier.weight(0.32f),
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+              text = "失败 ${breakdown.failureCount}/${breakdown.eventCount}",
+              color = if (breakdown.failureCount > 0) NbgAgentColors.StatusRed else NbgAgentColors.StatusGreen,
+              fontSize = 10.5.sp,
+              modifier = Modifier.weight(0.3f),
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
 private fun NbgUrlApiProviderProfilesCard(
   state: NbgModelProviderProfileState,
   templateText: String,
   message: String,
   editableProfileIds: Set<String>,
+  diagnosticsByProfileId: Map<String, NbgUrlApiRequestDiagnostics>,
   onTemplateChange: (String) -> Unit,
   onImport: (String) -> Unit,
   onExport: () -> String,
   onClear: () -> Unit,
   onSaveProfile: (String, NbgModelProviderProfile) -> Unit,
   onDeleteProfile: (String) -> Unit,
+  onTestProfile: (NbgModelProviderProfile) -> Unit,
 ) {
   val clipboard = LocalClipboardManager.current
   var dialogMode by remember { mutableStateOf<String?>(null) }
@@ -517,9 +611,14 @@ private fun NbgUrlApiProviderProfilesCard(
             text = profile.baseUrlHint.ifBlank { "custom endpoint" },
             color = NbgAgentColors.CodeText,
             fontSize = 10.5.sp,
-            modifier = Modifier.weight(0.4f),
+            modifier = Modifier.weight(0.28f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+          )
+          NbgPlainIconButton(
+            icon = Icons.Filled.Search,
+            contentDescription = "测试 ProviderProfile",
+            onClick = { onTestProfile(profile) },
           )
           if (editable) {
             NbgPlainIconButton(
@@ -528,6 +627,9 @@ private fun NbgUrlApiProviderProfilesCard(
               onClick = { editingDraft = profile.toProviderProfileEditorDraft() },
             )
           }
+        }
+        diagnosticsByProfileId[profile.id]?.let { diagnostics ->
+          NbgUrlApiDiagnosticsPanel(diagnostics)
         }
       }
     }
@@ -1157,13 +1259,18 @@ internal fun NbgUrlApiEditorDialog(
   models: List<NbgApiModel>,
   verifiedModelIds: Set<String>,
   selectedModelId: String,
+  manualModel: String,
+  requestDiagnostics: NbgUrlApiRequestDiagnostics?,
   busy: Boolean,
   message: String?,
   onNameChange: (String) -> Unit,
   onBaseUrlChange: (String) -> Unit,
   onApiKeyChange: (String) -> Unit,
   onSelectModel: (String) -> Unit,
+  onManualModelChange: (String) -> Unit,
+  onAddManualModel: () -> Unit,
   onFetchModels: () -> Unit,
+  onDiagnose: () -> Unit,
   onVerifyModel: (NbgApiModel) -> Unit,
   onSave: () -> Unit,
   onDismiss: () -> Unit,
@@ -1214,6 +1321,12 @@ internal fun NbgUrlApiEditorDialog(
             enabled = canFetch,
             onClick = onFetchModels,
           )
+          NbgInlineActionButton(
+            label = "诊断",
+            icon = Icons.Filled.Search,
+            enabled = canFetch,
+            onClick = onDiagnose,
+          )
           message?.takeIf { it.isNotBlank() }?.let {
             Text(
               text = it,
@@ -1223,6 +1336,29 @@ internal fun NbgUrlApiEditorDialog(
               modifier = Modifier.weight(1f),
             )
           }
+        }
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          OutlinedTextField(
+            value = manualModel,
+            onValueChange = onManualModelChange,
+            label = { Text("手动模型 ID") },
+            placeholder = { Text("例如 gpt-5.4") },
+            singleLine = true,
+            modifier = Modifier.weight(1f),
+          )
+          NbgInlineActionButton(
+            label = "添加",
+            icon = Icons.Filled.Add,
+            enabled = manualModel.trim().isNotBlank() && !busy,
+            onClick = onAddManualModel,
+          )
+        }
+        requestDiagnostics?.let { diagnostics ->
+          NbgUrlApiDiagnosticsPanel(diagnostics)
         }
         if (models.isNotEmpty()) {
           NbgDialogSectionLabel("上游模型")
@@ -1246,6 +1382,94 @@ internal fun NbgUrlApiEditorDialog(
       NbgDialogAction(label = "关闭", onClick = onDismiss)
     },
   )
+}
+
+@Composable
+private fun NbgUrlApiDiagnosticsPanel(
+  diagnostics: NbgUrlApiRequestDiagnostics,
+) {
+  Surface(
+    modifier = Modifier.fillMaxWidth(),
+    shape = RoundedCornerShape(13.dp),
+    color = NbgAgentColors.SurfaceLow,
+    border = BorderStroke(1.dp, if (diagnostics.hasHeaderConflict) NbgAgentColors.StatusRed else NbgAgentColors.InputBorder),
+  ) {
+    Column(
+      modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+      verticalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+      Text(
+        text = "请求诊断",
+        color = NbgAgentColors.TextStrong,
+        fontSize = 13.sp,
+        fontWeight = FontWeight.SemiBold,
+      )
+      listOf(
+        "base" to diagnostics.baseUrl,
+        "profile" to "${diagnostics.profileLabel} / ${diagnostics.apiMode}",
+        "models" to diagnostics.modelsEndpoint,
+        "chat" to diagnostics.chatEndpoint,
+        "auth" to diagnostics.authHeaderNames.joinToString(", "),
+      ).forEach { (label, value) ->
+        Text(
+          text = "$label: ${value.ifBlank { "-" }}",
+          color = NbgAgentColors.TextMuted,
+          fontSize = 10.5.sp,
+          lineHeight = 15.sp,
+          maxLines = 2,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
+      if (diagnostics.hasHeaderConflict) {
+        Text(
+          text = "检测到重复认证 header",
+          color = NbgAgentColors.StatusRed,
+          fontSize = 11.sp,
+          fontWeight = FontWeight.SemiBold,
+        )
+      }
+      diagnostics.endpoints.forEach { endpoint ->
+        Surface(
+          modifier = Modifier.fillMaxWidth(),
+          shape = RoundedCornerShape(10.dp),
+          color = NbgAgentColors.Drawer,
+          border = BorderStroke(1.dp, if (endpoint.ok) NbgAgentColors.PrimarySoft else NbgAgentColors.InputBorder),
+        ) {
+          Column(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+          ) {
+            Text(
+              text = "${endpoint.label} · ${endpoint.method} · ${if (endpoint.httpStatus > 0) endpoint.httpStatus else "-"} · ${endpoint.latencyMs}ms",
+              color = if (endpoint.ok) NbgAgentColors.Primary else NbgAgentColors.TextStrong,
+              fontSize = 11.sp,
+              fontWeight = FontWeight.SemiBold,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+              text = endpoint.message.ifBlank { endpoint.url },
+              color = if (endpoint.ok) NbgAgentColors.TextMuted else NbgAgentColors.StatusRed,
+              fontSize = 10.5.sp,
+              lineHeight = 15.sp,
+              maxLines = 3,
+              overflow = TextOverflow.Ellipsis,
+            )
+            if (endpoint.bodyPreview.isNotBlank()) {
+              Text(
+                text = endpoint.bodyPreview,
+                color = NbgAgentColors.CodeText,
+                fontSize = 10.sp,
+                lineHeight = 14.sp,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+              )
+            }
+          }
+        }
+      }
+    }
+  }
 }
 
 @Composable

@@ -210,6 +210,7 @@ internal fun NbgAgentChatScreen(
   onReplayLatestTurn: () -> Unit,
   onRequestRevertLatestTurn: () -> Unit,
   onCompressFork: () -> Unit,
+  onOpenSlashCommands: () -> Unit,
   onCompleteTodos: () -> Unit,
   onSend: (String) -> Unit,
   onAbort: () -> Unit,
@@ -303,6 +304,7 @@ internal fun NbgAgentChatScreen(
           onReplayLatestTurn = onReplayLatestTurn,
           onRequestRevertLatestTurn = onRequestRevertLatestTurn,
           onCompressFork = onCompressFork,
+          onOpenSlashCommands = onOpenSlashCommands,
           compressing = compressing,
           compressionAvailable = compressionAvailable,
           streaming = streaming,
@@ -982,6 +984,7 @@ internal fun NbgChatTopBar(
   onReplayLatestTurn: () -> Unit,
   onRequestRevertLatestTurn: () -> Unit,
   onCompressFork: () -> Unit,
+  onOpenSlashCommands: () -> Unit,
   compressing: Boolean,
   compressionAvailable: Boolean,
   streaming: Boolean,
@@ -1048,6 +1051,10 @@ internal fun NbgChatTopBar(
       menuOpen = false
       onCompressFork()
     },
+    onOpenSlashCommands = {
+      menuOpen = false
+      onOpenSlashCommands()
+    },
     onReplayLatestTurn = {
       menuOpen = false
       onReplayLatestTurn()
@@ -1067,6 +1074,7 @@ private fun NbgChatActionsSheet(
   streaming: Boolean,
   onDismiss: () -> Unit,
   onCompressFork: () -> Unit,
+  onOpenSlashCommands: () -> Unit,
   onReplayLatestTurn: () -> Unit,
   onRequestRevertLatestTurn: () -> Unit,
 ) {
@@ -1079,6 +1087,14 @@ private fun NbgChatActionsSheet(
     onDismiss = onDismiss,
   ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+      NbgChatActionCard(
+        mark = "/",
+        title = "命令中心",
+        subtitle = "搜索 /model、/tools、/skills、/memory、/provider、/usage、/compress 和后端 slash commands。",
+        meta = "slash",
+        enabled = true,
+        onClick = onOpenSlashCommands,
+      )
       NbgChatActionCard(
         mark = "ctx",
         title = when {

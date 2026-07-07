@@ -6,12 +6,23 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.TimeUnit
 
 internal const val NBG_SKILL_CURATOR_LOOP_WORK_NAME = "nbg-skill-curator-loop"
 internal const val NBG_SKILL_CURATOR_LOOP_VERSION = "nbg-skill-curator-loop-v1"
+private const val NBG_SKILL_CURATOR_RUN_HISTORY_LIMIT = 12
+
+data class NbgSkillCuratorRunHistoryEntry(
+  val kind: String = "review",
+  val ok: Boolean = true,
+  val ranAtMs: Long = 0L,
+  val actionCount: Int = 0,
+  val suggestionCount: Int = 0,
+  val message: String = "",
+)
 
 data class NbgSkillCuratorLoopState(
   val enabled: Boolean = false,
@@ -25,6 +36,7 @@ data class NbgSkillCuratorLoopState(
   val lastLlmSuggestionCount: Int = 0,
   val lastLlmSuggestion: String = "",
   val lastError: String = "",
+  val runHistory: List<NbgSkillCuratorRunHistoryEntry> = emptyList(),
   val modelVersion: String = NBG_SKILL_CURATOR_LOOP_VERSION,
 ) {
   val statusLabel: String
@@ -59,12 +71,25 @@ internal class NbgSkillCuratorLoopStore(context: Context) {
 
   fun recordLlmReview(result: NbgSkillCuratorLlmReviewResult, nowMs: Long = System.currentTimeMillis()): NbgSkillCuratorLoopState {
     val current = load()
+    val summary = if (result.ok) {
+      result.suggestions.joinToString("; ") { "${it.skillName}:${it.action}:${it.reason}" }.take(700)
+    } else {
+      result.message.take(180)
+    }
     return save(
       current.copy(
         lastLlmReviewAtMs = if (result.ok) nowMs.coerceAtLeast(0L) else current.lastLlmReviewAtMs,
         lastLlmSuggestionCount = if (result.ok) result.suggestions.size else current.lastLlmSuggestionCount,
-        lastLlmSuggestion = if (result.ok) result.suggestions.joinToString("; ") { "${it.skillName}:${it.action}:${it.reason}" }.take(700) else current.lastLlmSuggestion,
+        lastLlmSuggestion = if (result.ok) summary else current.lastLlmSuggestion,
         lastError = if (result.ok) "" else result.message.take(180),
+      ).withRunHistory(
+        NbgSkillCuratorRunHistoryEntry(
+          kind = "llm",
+          ok = result.ok,
+          ranAtMs = nowMs.coerceAtLeast(0L),
+          suggestionCount = if (result.ok) result.suggestions.size else 0,
+          message = summary,
+        ),
       ),
     )
   }
@@ -138,10 +163,28 @@ internal class NbgSkillCuratorLoopRunner(
           lastRunAtMs = nowMs.coerceAtLeast(0L),
           lastActionCount = review.actions.size,
           lastError = "",
+        ).withRunHistory(
+          NbgSkillCuratorRunHistoryEntry(
+            kind = "review",
+            ok = true,
+            ranAtMs = nowMs.coerceAtLeast(0L),
+            actionCount = review.actions.size,
+            message = "本地复核 ${review.actions.size} 个动作，归档 ${review.archivedCount} 个 Skill",
+          ),
         ),
       )
     }.getOrElse { error ->
-      loopStore.save(current.copy(lastError = (error.message ?: error.javaClass.simpleName).take(180)))
+      val message = (error.message ?: error.javaClass.simpleName).take(180)
+      loopStore.save(
+        current.copy(lastError = message).withRunHistory(
+          NbgSkillCuratorRunHistoryEntry(
+            kind = "review",
+            ok = false,
+            ranAtMs = nowMs.coerceAtLeast(0L),
+            message = message,
+          ),
+        ),
+      )
     }
   }
 }
@@ -185,6 +228,7 @@ internal fun parseNbgSkillCuratorLoopState(raw: String?): NbgSkillCuratorLoopSta
       lastLlmSuggestionCount = root.optInt("lastLlmSuggestionCount", 0),
       lastLlmSuggestion = root.cleanString("lastLlmSuggestion").orEmpty(),
       lastError = root.cleanString("lastError").orEmpty(),
+      runHistory = root.optJSONArray("runHistory").toNbgSkillCuratorRunHistory(),
     ).normalized()
   }.getOrDefault(NbgSkillCuratorLoopState())
 
@@ -199,6 +243,10 @@ private fun NbgSkillCuratorLoopState.normalized(): NbgSkillCuratorLoopState =
     lastLlmSuggestionCount = lastLlmSuggestionCount.coerceAtLeast(0),
     lastLlmSuggestion = lastLlmSuggestion.trim().take(700),
     lastError = lastError.trim().take(180),
+    runHistory = runHistory
+      .map { it.normalized() }
+      .sortedByDescending { it.ranAtMs }
+      .take(NBG_SKILL_CURATOR_RUN_HISTORY_LIMIT),
   )
 
 private fun NbgSkillCuratorLoopState.toJsonString(): String =
@@ -215,7 +263,50 @@ private fun NbgSkillCuratorLoopState.toJsonString(): String =
     .put("lastLlmSuggestionCount", lastLlmSuggestionCount)
     .put("lastLlmSuggestion", lastLlmSuggestion)
     .put("lastError", lastError)
+    .put("runHistory", JSONArray().also { array ->
+      runHistory.forEach { array.put(it.toJson()) }
+    })
     .toString()
+
+private fun NbgSkillCuratorLoopState.withRunHistory(entry: NbgSkillCuratorRunHistoryEntry): NbgSkillCuratorLoopState =
+  copy(runHistory = listOf(entry) + runHistory)
+
+private fun JSONArray?.toNbgSkillCuratorRunHistory(): List<NbgSkillCuratorRunHistoryEntry> {
+  if (this == null) return emptyList()
+  return buildList {
+    for (index in 0 until length().coerceAtMost(NBG_SKILL_CURATOR_RUN_HISTORY_LIMIT * 2)) {
+      val item = optJSONObject(index) ?: continue
+      add(
+        NbgSkillCuratorRunHistoryEntry(
+          kind = item.cleanString("kind") ?: "review",
+          ok = item.optBoolean("ok", true),
+          ranAtMs = item.optLong("ranAtMs", 0L),
+          actionCount = item.optInt("actionCount", 0),
+          suggestionCount = item.optInt("suggestionCount", 0),
+          message = item.cleanString("message").orEmpty(),
+        ),
+      )
+    }
+  }
+}
+
+private fun NbgSkillCuratorRunHistoryEntry.normalized(): NbgSkillCuratorRunHistoryEntry =
+  copy(
+    kind = kind.trim().lowercase().ifBlank { "review" }.take(24),
+    ranAtMs = ranAtMs.coerceAtLeast(0L),
+    actionCount = actionCount.coerceAtLeast(0),
+    suggestionCount = suggestionCount.coerceAtLeast(0),
+    message = message.trim().take(180),
+  )
+
+private fun NbgSkillCuratorRunHistoryEntry.toJson(): JSONObject =
+  JSONObject()
+    .put("kind", kind)
+    .put("ok", ok)
+    .put("ranAtMs", ranAtMs)
+    .put("actionCount", actionCount)
+    .put("suggestionCount", suggestionCount)
+    .put("message", message)
 
 internal class NbgSkillCuratorAndroidLlmLoop(
   context: Context,

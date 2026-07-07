@@ -198,6 +198,7 @@ fun NbgAndroidShell(
   val modelConfigState = remember { NbgAgentModelConfigState() }
   val context = LocalContext.current
   val apiStore = remember(context) { NbgApiStore(context) }
+  val usageCostStore = remember(context) { NbgUsageCostStore(context) }
   val providerProfileStore = remember(context) { NbgModelProviderProfileTemplateStore(context) }
   val chatPreferenceStore = remember(context) { NbgChatPreferenceStore(context) }
   val petStore = remember(context) { NbgPetStore(context) }
@@ -214,6 +215,12 @@ fun NbgAndroidShell(
   var providerProfileTemplateText by remember { mutableStateOf("") }
   var providerProfileMessage by remember { mutableStateOf("") }
   var editableProviderProfileIds by remember { mutableStateOf(providerProfileStore.loadCustomProfiles().map { it.id }.toSet()) }
+  var providerProfileDiagnostics by remember { mutableStateOf<Map<String, NbgUrlApiRequestDiagnostics>>(emptyMap()) }
+  var localUsageCostState by remember { mutableStateOf(usageCostStore.load()) }
+  var slashCommandDialogOpen by remember { mutableStateOf(false) }
+  var slashCommands by remember { mutableStateOf<List<HanakoSlashCommand>>(emptyList()) }
+  var slashCommandsLoading by remember { mutableStateOf(false) }
+  var slashCommandsError by remember { mutableStateOf<String?>(null) }
   val apiEditor = rememberNbgAgentApiEditorState()
   val expertReviewState = remember { NbgAgentExpertReviewState() }
   val skillTranslationState = remember { NbgAgentSkillTranslationState() }
@@ -813,8 +820,15 @@ fun NbgAndroidShell(
         is HanakoChatEvent.AgentModelConfigFailed -> {
           modelConfigState.applyFailed(event.message)
         }
-        is HanakoChatEvent.SlashCommandsLoaded -> Unit
-        is HanakoChatEvent.SlashCommandsFailed -> Unit
+        is HanakoChatEvent.SlashCommandsLoaded -> {
+          slashCommands = event.commands
+          slashCommandsLoading = false
+          slashCommandsError = null
+        }
+        is HanakoChatEvent.SlashCommandsFailed -> {
+          slashCommandsLoading = false
+          slashCommandsError = event.message
+        }
         is HanakoChatEvent.ProvidersLoaded -> Unit
         is HanakoChatEvent.ProvidersFailed -> Unit
         is HanakoChatEvent.ModelHealthLoaded -> Unit
@@ -867,6 +881,43 @@ fun NbgAndroidShell(
       return
     }
     applyPreferredPermissionMode(normalizedMode)
+  }
+  fun refreshSlashCommandCenter() {
+    slashCommandsLoading = true
+    slashCommandsError = null
+    hanako.loadSlashCommands()
+  }
+  fun openSlashCommandCenter() {
+    slashCommandDialogOpen = true
+    refreshSlashCommandCenter()
+  }
+  fun runSlashCommandCenterCommand(command: String) {
+    val trimmed = command.trim()
+    if (trimmed.isBlank()) return
+    slashCommandDialogOpen = false
+    when (trimmed.substringBefore(" ").lowercase()) {
+      "/model" -> {
+        shellState.showChat()
+        modelConfigState.beginLoad()
+        hanako.loadAgentModelConfig()
+      }
+      "/tools" -> shellState.showPage(NbgShellPage.ToolsetsDoctor)
+      "/skills" -> shellState.showPage(NbgShellPage.Skills)
+      "/memory" -> shellState.showPage(NbgShellPage.Memory)
+      "/provider" -> {
+        loadSavedApis()
+        shellState.showPage(NbgShellPage.UrlApi)
+      }
+      "/usage" -> {
+        hanako.refreshContextInsights()
+        shellState.showPage(NbgShellPage.Learning)
+      }
+      "/compress" -> {
+        historyState.requestNewConversation()
+        hanako.compressForkSession()
+      }
+      else -> hanako.sendPrompt(trimmed, displayText = trimmed)
+    }
   }
   val terminalWorkspace = TerminalWorkspace.shared
   val terminalReadinessVersion by terminalWorkspace.readinessVersion.collectAsState()
@@ -1006,6 +1057,18 @@ fun NbgAndroidShell(
               )
             }.fold(
               onSuccess = { result ->
+                localUsageCostState = usageCostStore.record(
+                  NbgUsageCostEvent(
+                    providerId = entry.name,
+                    modelId = model.id,
+                    inputTokens = result.inputTokens,
+                    outputTokens = result.outputTokens,
+                    totalTokens = result.totalTokens,
+                    latencyMs = result.latencyMs,
+                    failed = !result.ok,
+                    createdAtMs = System.currentTimeMillis(),
+                  ),
+                )
                 NbgExpertReviewReferenceOutput(
                   model = modelRef,
                   ok = result.ok,
@@ -1014,6 +1077,14 @@ fun NbgAndroidShell(
                 )
               },
               onFailure = { error ->
+                localUsageCostState = usageCostStore.record(
+                  NbgUsageCostEvent(
+                    providerId = entry.name,
+                    modelId = model.id,
+                    failed = true,
+                    createdAtMs = System.currentTimeMillis(),
+                  ),
+                )
                 NbgExpertReviewReferenceOutput(
                   model = modelRef,
                   ok = false,
@@ -1405,6 +1476,7 @@ fun NbgAndroidShell(
           historyState.requestNewConversation()
           hanako.compressForkSession()
         },
+        onOpenSlashCommands = { openSlashCommandCenter() },
         onCompleteTodos = hanako::completeTodos,
         onSend = { prompt ->
           val selected = nbgSelectedUrlApi(savedApis, selectedUrlApiModel)
@@ -1581,6 +1653,8 @@ fun NbgAndroidShell(
         providerProfileTemplateText = providerProfileTemplateText,
         providerProfileMessage = providerProfileMessage,
         editableProviderProfileIds = editableProviderProfileIds,
+        providerProfileDiagnostics = providerProfileDiagnostics,
+        usageCostState = localUsageCostState,
         expertReviewPrompt = expertReviewState.prompt,
         expertReviewSelectedKeys = expertReviewState.selectedModelKeys,
         expertReviewRunning = expertReviewState.running,
@@ -1641,6 +1715,47 @@ fun NbgAndroidShell(
           providerProfileTemplateText = providerProfileStore.exportTemplates()
           providerProfileMessage = "已删除 $id ProviderProfile"
         },
+        onTestProviderProfile = { profile ->
+          val matched = savedApis.firstOrNull { entry ->
+            profile.baseUrlHint.isNotBlank() && entry.baseUrl.contains(profile.baseUrlHint, ignoreCase = true)
+          }
+          val modelId = matched?.selectedModelId
+            ?.ifBlank { matched.verifiedModelIds.firstOrNull().orEmpty() }
+            ?.ifBlank { matched.models.firstOrNull()?.id.orEmpty() }
+            ?: profile.defaultModel
+          if (matched == null || matched.apiKey.isBlank()) {
+            providerProfileDiagnostics = providerProfileDiagnostics + (
+              profile.id to nbgBuildUrlApiRequestDiagnostics(
+                baseUrl = profile.baseUrlHint,
+                apiKey = "",
+                modelId = modelId,
+                providerProfiles = listOf(profile),
+              ).copy(
+                endpoints = listOf(
+                  NbgUrlApiEndpointDiagnostic(
+                    label = "profile",
+                    method = "-",
+                    url = profile.baseUrlHint,
+                    message = "没有匹配的已保存 URL API 账号，先保存一个包含 ${profile.baseUrlHint} 的配置",
+                  ),
+                ),
+              )
+            )
+            providerProfileMessage = "没有匹配的已保存 URL API 账号"
+          } else {
+            providerProfileMessage = "正在测试 ${profile.label}..."
+            scope.launch {
+              val result = apiClient.diagnoseUrlApi(
+                baseUrl = matched.baseUrl,
+                apiKey = matched.apiKey,
+                modelId = modelId,
+                providerProfiles = providerProfileStore.loadCustomProfiles(),
+              )
+              providerProfileDiagnostics = providerProfileDiagnostics + (profile.id to result)
+              providerProfileMessage = "${profile.label} 测试完成"
+            }
+          }
+        },
       )
       NbgShellPage.ToolsetsDoctor -> NbgToolsetsDoctorScreen(
         preferences = chatPreferences,
@@ -1686,6 +1801,17 @@ fun NbgAndroidShell(
       },
     )
   }
+  if (slashCommandDialogOpen) {
+    NbgSlashCommandDialog(
+      commands = slashCommands,
+      shortcuts = nbgAndroidSlashCommandShortcuts(hanakoState.compressionAvailable),
+      loading = slashCommandsLoading,
+      error = slashCommandsError,
+      onRefresh = { refreshSlashCommandCenter() },
+      onRunCommand = { runSlashCommandCenterCommand(it) },
+      onDismiss = { slashCommandDialogOpen = false },
+    )
+  }
   if (fileShareUiState.isOpen) {
     val fileShareState = fileShareUiState.serverState ?: NbgFileShareServerRegistry.snapshot(context)
     NbgFileShareDialog(
@@ -1719,12 +1845,16 @@ fun NbgAndroidShell(
       models = apiEditor.models,
       verifiedModelIds = apiEditor.verifiedModelIds,
       selectedModelId = apiEditor.selectedModelId,
+      manualModel = apiEditor.manualModelDraft,
+      requestDiagnostics = apiEditor.requestDiagnostics,
       busy = apiEditor.busy,
       message = apiEditor.actionMessage,
       onNameChange = { apiEditor.nameDraft = it },
       onBaseUrlChange = apiEditor::updateBaseUrl,
       onApiKeyChange = apiEditor::updateApiKey,
       onSelectModel = { apiEditor.selectedModelId = it },
+      onManualModelChange = apiEditor::updateManualModel,
+      onAddManualModel = { apiEditor.addManualModel() },
       onFetchModels = {
         val requestSerial = apiEditor.nextRequestSerial()
         val requestedUrl = apiEditor.baseUrlDraft
@@ -1739,6 +1869,23 @@ fun NbgAndroidShell(
             requestedKey != apiEditor.apiKeyDraft.trim()
           ) return@launch
           apiEditor.applyFetchedModels(result)
+        }
+      },
+      onDiagnose = {
+        val requestSerial = apiEditor.nextRequestSerial()
+        val requestedUrl = apiEditor.baseUrlDraft
+        val requestedKey = apiEditor.apiKeyDraft.trim()
+        val requestedModelId = apiEditor.selectedModelId.ifBlank { apiEditor.models.firstOrNull()?.id.orEmpty() }
+        apiEditor.busy = true
+        apiEditor.actionMessage = "正在诊断请求..."
+        scope.launch {
+          val result = apiClient.diagnoseUrlApi(requestedUrl, requestedKey, requestedModelId, providerProfileStore.loadCustomProfiles())
+          if (
+            !apiEditor.isCurrentRequest(requestSerial) ||
+            requestedUrl != apiEditor.baseUrlDraft ||
+            requestedKey != apiEditor.apiKeyDraft.trim()
+          ) return@launch
+          apiEditor.applyDiagnostics(result)
         }
       },
       onVerifyModel = { model ->

@@ -618,6 +618,14 @@ private fun NbgSkillDiffMergeCard(
         maxLines = 2,
         overflow = TextOverflow.Ellipsis,
       )
+      Text(
+        text = "Side-by-side 审查 · before ${preview.beforeText.lines().size} 行 / after ${preview.afterText.lines().size} 行 · merge session ${preview.hunks.size} 块待选择",
+        color = NbgAgentColors.TextMuted,
+        fontSize = 10.5.sp,
+        lineHeight = 15.sp,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+      )
       if (preview.conflict) {
         Text(
           text = "Patch draft 未命中当前文件内容；请先审查上下文或关闭预览。",
@@ -688,6 +696,12 @@ private fun NbgSkillDiffMergeCard(
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.weight(1f),
+              )
+              Text(
+                text = if (hunk.addedCount > 0 && hunk.removedCount > 0) "修改" else if (hunk.addedCount > 0) "新增" else "删除",
+                color = NbgAgentColors.TextMuted,
+                fontSize = 10.sp,
+                maxLines = 1,
               )
               NbgInlineActionButton(
                 label = "仅此块",
@@ -834,6 +848,21 @@ private fun NbgSkillCuratorCard(
         maxLines = 2,
         overflow = TextOverflow.Ellipsis,
       )
+      if (loopState.runHistory.isNotEmpty()) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+          Text(
+            text = "后台运行历史",
+            color = NbgAgentColors.TextStrong,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+          loopState.runHistory.take(4).forEach { entry ->
+            NbgSkillCuratorRunHistoryRow(entry)
+          }
+        }
+      }
       suggestionQueue.pendingEntries.take(3).forEach { suggestion ->
         NbgSkillCuratorSuggestionRow(
           suggestion = suggestion,
@@ -872,6 +901,60 @@ private fun NbgSkillCuratorCard(
       )
     }
   }
+}
+
+@Composable
+private fun NbgSkillCuratorRunHistoryRow(entry: NbgSkillCuratorRunHistoryEntry) {
+  Surface(
+    modifier = Modifier.fillMaxWidth(),
+    shape = RoundedCornerShape(12.dp),
+    color = NbgAgentColors.SurfaceContainer.copy(alpha = 0.52f),
+    border = BorderStroke(1.dp, NbgAgentColors.InputBorder.copy(alpha = 0.6f)),
+  ) {
+    Row(
+      modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+      NbgSkillsStatusPill(
+        text = if (entry.ok) "OK" else "FAIL",
+        color = if (entry.ok) NbgAgentColors.StatusGreen else NbgAgentColors.StatusRed,
+      )
+      Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+          text = "${entry.kind.uppercase()} · ${nbgSkillCuratorHistoryTime(entry.ranAtMs)}",
+          color = NbgAgentColors.TextStrong,
+          fontSize = 11.sp,
+          fontWeight = FontWeight.Medium,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+          text = nbgSkillCuratorHistoryDetail(entry),
+          color = NbgAgentColors.TextMuted,
+          fontSize = 10.sp,
+          lineHeight = 14.sp,
+          maxLines = 2,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
+    }
+  }
+}
+
+private fun nbgSkillCuratorHistoryDetail(entry: NbgSkillCuratorRunHistoryEntry): String {
+  val counters = listOfNotNull(
+    entry.actionCount.takeIf { it > 0 }?.let { "$it 个动作" },
+    entry.suggestionCount.takeIf { it > 0 }?.let { "$it 条建议" },
+  ).joinToString(" · ")
+  return listOf(counters, entry.message).filter { it.isNotBlank() }.joinToString(" · ").ifBlank {
+    if (entry.ok) "已完成后台复核" else "后台复核失败"
+  }
+}
+
+private fun nbgSkillCuratorHistoryTime(value: Long): String {
+  if (value <= 0L) return "未记录时间"
+  return java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.US).format(java.util.Date(value))
 }
 
 @Composable

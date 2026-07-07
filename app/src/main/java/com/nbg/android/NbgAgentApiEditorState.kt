@@ -18,6 +18,8 @@ internal class NbgAgentApiEditorState {
   var baseUrlDraft by mutableStateOf("")
   var effectiveBaseUrlDraft by mutableStateOf("")
   var apiKeyDraft by mutableStateOf("")
+  var manualModelDraft by mutableStateOf("")
+  var requestDiagnostics by mutableStateOf<NbgUrlApiRequestDiagnostics?>(null)
   var requestSerial by mutableStateOf(0L)
     private set
 
@@ -27,6 +29,8 @@ internal class NbgAgentApiEditorState {
     baseUrlDraft = entry?.baseUrl.orEmpty()
     effectiveBaseUrlDraft = entry?.baseUrl.orEmpty()
     apiKeyDraft = entry?.apiKey.orEmpty()
+    manualModelDraft = ""
+    requestDiagnostics = null
     models = entry?.models.orEmpty()
     verifiedModelIds = entry?.verifiedModelIds.orEmpty()
     selectedModelId = entry?.selectedModelId.orEmpty()
@@ -40,6 +44,26 @@ internal class NbgAgentApiEditorState {
     editingApi = null
     isOpen = false
     actionMessage = null
+    busy = false
+  }
+
+  fun updateManualModel(value: String) {
+    manualModelDraft = value
+  }
+
+  fun addManualModel() {
+    val id = manualModelDraft.trim()
+    if (id.isBlank()) return
+    val model = NbgApiModel(id = id, label = id)
+    models = (models + model).distinctBy { it.id }
+    selectedModelId = id
+    manualModelDraft = ""
+    actionMessage = "已添加手动模型 $id，请验证可用后保存"
+  }
+
+  fun applyDiagnostics(diagnostics: NbgUrlApiRequestDiagnostics) {
+    requestDiagnostics = diagnostics
+    actionMessage = diagnostics.endpoints.lastOrNull()?.message ?: "诊断完成"
     busy = false
   }
 
@@ -98,6 +122,7 @@ internal class NbgAgentApiEditorState {
   private fun clearVerificationAfterCredentialChange() {
     effectiveBaseUrlDraft = ""
     verifiedModelIds = emptySet()
+    requestDiagnostics = null
     busy = false
   }
 }
