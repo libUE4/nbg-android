@@ -106,8 +106,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -196,6 +198,7 @@ fun NbgAndroidShell(
   val modelConfigState = remember { NbgAgentModelConfigState() }
   val context = LocalContext.current
   val apiStore = remember(context) { NbgApiStore(context) }
+  val providerProfileStore = remember(context) { NbgModelProviderProfileTemplateStore(context) }
   val chatPreferenceStore = remember(context) { NbgChatPreferenceStore(context) }
   val petStore = remember(context) { NbgPetStore(context) }
   val petDexClient = remember(context) { NbgPetDexClient(nbgPetDexManifestProvenanceDir(context.filesDir)) }
@@ -207,6 +210,9 @@ fun NbgAndroidShell(
   val urlApiEntriesState = remember { NbgAgentUrlApiEntriesState() }
   val savedApis = urlApiEntriesState.entries
   val savedApisLoaded = urlApiEntriesState.loaded
+  var providerProfileState by remember { mutableStateOf(providerProfileStore.load(savedApis)) }
+  var providerProfileTemplateText by remember { mutableStateOf("") }
+  var providerProfileMessage by remember { mutableStateOf("") }
   val apiEditor = rememberNbgAgentApiEditorState()
   val expertReviewState = remember { NbgAgentExpertReviewState() }
   val skillTranslationState = remember { NbgAgentSkillTranslationState() }
@@ -221,7 +227,12 @@ fun NbgAndroidShell(
   val todoState = remember { NbgAgentTodoState() }
   val userMessageDedupState = remember { NbgAgentUserMessageDedupState() }
   fun loadSavedApis() {
-    urlApiEntriesState.applyLoaded(apiStore.load())
+    val loaded = apiStore.load()
+    urlApiEntriesState.applyLoaded(loaded)
+    providerProfileState = providerProfileStore.load(loaded)
+  }
+  fun refreshProviderProfileState(entries: List<NbgStoredApi> = savedApis) {
+    providerProfileState = providerProfileStore.load(entries)
   }
   fun loadChatPreferences() {
     chatPreferenceState.applyLoaded(chatPreferenceStore.load())
@@ -950,7 +961,12 @@ fun NbgAndroidShell(
     if (!skillTranslationState.begin(skill.name)) return
     scope.launch {
       runCatching {
-        apiClient.translateSkillDescriptions(selected.first, selected.second, listOf(skill))
+        apiClient.translateSkillDescriptions(
+          selected.first,
+          selected.second,
+          listOf(skill),
+          providerProfileStore.loadCustomProfiles(),
+        )
       }.onSuccess { result ->
         skillTranslationState.applySuccess(skill.name, result)
       }.onFailure { error ->
@@ -983,6 +999,7 @@ fun NbgAndroidShell(
                 entry = entry,
                 model = model,
                 prompt = prompt,
+                providerProfiles = providerProfileStore.loadCustomProfiles(),
               )
             }.fold(
               onSuccess = { result ->
@@ -1073,6 +1090,9 @@ fun NbgAndroidShell(
   }
   LaunchedEffect(apiStore) {
     loadSavedApis()
+  }
+  LaunchedEffect(savedApisLoaded, savedApis) {
+    if (savedApisLoaded) refreshProviderProfileState(savedApis)
   }
   LaunchedEffect(
     hanakoState.connected,
@@ -1554,7 +1574,9 @@ fun NbgAndroidShell(
       )
       NbgShellPage.UrlApi -> NbgUrlApiScreen(
         entries = savedApis,
-        providerProfileState = nbgProfilesForStoredApis(savedApis),
+        providerProfileState = providerProfileState,
+        providerProfileTemplateText = providerProfileTemplateText,
+        providerProfileMessage = providerProfileMessage,
         expertReviewPrompt = expertReviewState.prompt,
         expertReviewSelectedKeys = expertReviewState.selectedModelKeys,
         expertReviewRunning = expertReviewState.running,
@@ -1576,6 +1598,25 @@ fun NbgAndroidShell(
         onToggleExpertReviewModel = { expertReviewState.toggleModel(it) },
         onRunExpertReview = { runExpertReview() },
         onCancelExpertReview = { expertReviewState.cancelCurrentRun() },
+        onProviderProfileTemplateChange = { providerProfileTemplateText = it },
+        onImportProviderProfiles = { raw ->
+          val imported = providerProfileStore.importTemplates(raw)
+          providerProfileState = providerProfileStore.load(savedApis)
+          providerProfileTemplateText = providerProfileStore.exportTemplates()
+          providerProfileMessage = "已导入 ${imported.profileCount} 个用户 ProviderProfile"
+        },
+        onExportProviderProfiles = {
+          val exported = providerProfileStore.exportTemplates()
+          providerProfileTemplateText = exported
+          providerProfileMessage = "已导出 ${providerProfileStore.loadCustomProfiles().size} 个用户 ProviderProfile"
+          exported
+        },
+        onClearProviderProfiles = {
+          providerProfileStore.clear()
+          refreshProviderProfileState(savedApis)
+          providerProfileTemplateText = ""
+          providerProfileMessage = "已清空用户 ProviderProfile"
+        },
       )
       NbgShellPage.ToolsetsDoctor -> NbgToolsetsDoctorScreen(
         preferences = chatPreferences,
@@ -1667,7 +1708,7 @@ fun NbgAndroidShell(
         apiEditor.busy = true
         apiEditor.actionMessage = "正在获取上游模型..."
         scope.launch {
-          val result = apiClient.fetchModels(requestedUrl, requestedKey)
+          val result = apiClient.fetchModels(requestedUrl, requestedKey, providerProfileStore.loadCustomProfiles())
           if (
             !apiEditor.isCurrentRequest(requestSerial) ||
             requestedUrl != apiEditor.baseUrlDraft ||
@@ -1684,7 +1725,7 @@ fun NbgAndroidShell(
         apiEditor.busy = true
         apiEditor.actionMessage = "正在验证 ${model.id}..."
         scope.launch {
-          val result = apiClient.verifyModel(requestedUrl, requestedKey, requestedModelId)
+          val result = apiClient.verifyModel(requestedUrl, requestedKey, requestedModelId, providerProfileStore.loadCustomProfiles())
           if (
             !apiEditor.isCurrentRequest(requestSerial) ||
             requestedUrl != apiEditor.baseUrlDraft ||

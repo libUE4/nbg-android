@@ -33,6 +33,7 @@ internal class NbgSkillCuratorLlmReviewRunner(
     snapshot: HanakoSkillsSnapshot,
     metadata: NbgSkillCuratorMetadata,
     drafts: NbgLearnedSkillDraftQueue,
+    providerProfiles: List<NbgModelProviderProfile> = emptyList(),
   ): NbgSkillCuratorLlmReviewResult {
     val prompt = nbgBuildSkillCuratorLlmPrompt(snapshot, metadata, drafts)
     if (prompt.isBlank()) return NbgSkillCuratorLlmReviewResult(false, "没有可复核的 Skill")
@@ -41,6 +42,7 @@ internal class NbgSkillCuratorLlmReviewRunner(
       model = model,
       prompt = prompt,
       systemPrompt = "你是只读 Skill curator。只输出 JSON，不要调用工具，不要写文件。建议 action 只能是 keep, merge, rewrite, archive。",
+      providerProfiles = providerProfiles,
     )
     if (!result.ok) return NbgSkillCuratorLlmReviewResult(false, result.message)
     val suggestions = nbgParseSkillCuratorLlmSuggestions(result.text)

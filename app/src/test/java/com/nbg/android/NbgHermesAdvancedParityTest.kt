@@ -115,6 +115,76 @@ class NbgHermesAdvancedParityTest {
   }
 
   @Test
+  fun providerProfileTemplatesSanitizeSecretsAndRouteCustomProviders() {
+    val raw = JSONObject()
+      .put(
+        "profiles",
+        JSONArray().put(
+          JSONObject()
+            .put("id", "acme")
+            .put("label", "Acme AI")
+            .put("baseUrlHint", "api.acme.ai")
+            .put("authHeader", "X-API-Key")
+            .put("authPrefix", "")
+            .put("modelsPath", "/models")
+            .put("chatPath", "/chat")
+            .put("apiMode", "openai")
+            .put("supportsThinking", true)
+            .put(
+              "extraBodyJson",
+              JSONObject()
+                .put("routing", "fast")
+                .put("api_key", "secret-should-not-export")
+                .toString(),
+            ),
+        ),
+      )
+      .toString()
+
+    val custom = nbgParseCustomModelProviderProfiles(raw)
+    val bearerDefault = nbgParseCustomModelProviderProfiles(
+      JSONObject()
+        .put(
+          "profiles",
+          JSONArray().put(
+            JSONObject()
+              .put("id", "bearer-default")
+              .put("label", "Bearer Default")
+              .put("baseUrlHint", "bearer.example"),
+          ),
+        )
+        .toString(),
+    ).first()
+    val profile = nbgProfileForUrlApi("https://api.acme.ai/v2", "acme-large", custom)
+    val state = nbgProfilesForStoredApis(
+      entries = listOf(
+        NbgStoredApi(
+          id = "entry-acme",
+          name = "Acme Work",
+          baseUrl = "https://api.acme.ai/v2",
+          apiKey = "secret",
+          models = listOf(NbgApiModel("acme-large")),
+          verifiedModelIds = setOf("acme-large"),
+          selectedModelId = "acme-large",
+        ),
+      ),
+      userProfiles = custom,
+    )
+
+    assertEquals(1, custom.size)
+    assertEquals("acme", profile.id)
+    assertEquals("https://api.acme.ai/v2/chat", profile.chatEndpoint("https://api.acme.ai/v2"))
+    assertEquals("X-API-Key", profile.authHeader)
+    assertEquals("", profile.authPrefix)
+    assertEquals("Bearer ", bearerDefault.authPrefix)
+    assertTrue(profile.supportsThinking)
+    assertTrue(profile.extraBodyJson.contains("routing"))
+    assertEquals(false, profile.extraBodyJson.contains("api_key"))
+    assertTrue(state.profiles.any { it.id == "acme" })
+    assertTrue(state.profiles.any { it.id == "url-api-entry-acme" && it.supportsThinking })
+  }
+
+  @Test
   fun contextInsightsSummarizeUsageLearningAndCompressionAdvice() {
     val insights = nbgBuildContextInsights(
       usage = NbgContextUsageSnapshot(totalTokens = 80_000, contextLimit = 100_000, percentUsed = 80, compressionAvailable = true),

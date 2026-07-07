@@ -62,6 +62,7 @@ class HanakoChatController(
   private val journeyMutations = NbgLearningJourneyMutations(appContext)
   private val skillManage = NbgSkillManage(appContext)
   private val skillDiffMerge = NbgSkillDiffMerge(appContext)
+  private val modelProviderProfileStore = NbgModelProviderProfileTemplateStore(appContext)
   private val contextCompressionStrategyStore = NbgContextCompressionStrategyStore(appContext)
   private val sessionFtsIndexStore = NbgSessionFtsIndexStore(appContext)
   private val usageCostStore = NbgUsageCostStore(appContext)
@@ -710,6 +711,9 @@ class HanakoChatController(
     syncDefaultUrlApiModel()
   }
 
+  private fun currentModelProviderProfiles(): List<NbgModelProviderProfile> =
+    modelProviderProfileStore.loadCustomProfiles()
+
   fun syncUrlApiProviders(entries: List<NbgStoredApi>) {
     activeUrlApiProvidersLoaded = true
     activeUrlApiProviderIds = entries.map { nbgUrlApiProviderId(it.id) }.toSet()
@@ -744,7 +748,7 @@ class HanakoChatController(
 
   private fun HanakoApiClient.configureDefaultUrlApiModelIfNeeded(info: HanakoServerInfo) {
     val current = defaultUrlApi ?: return
-    configureUrlApiModel(info, current.first, current.second)
+    configureUrlApiModel(info, current.first, current.second, currentModelProviderProfiles())
   }
 
   private fun syncDefaultUrlApiModel() {
@@ -754,7 +758,7 @@ class HanakoChatController(
       runCatching {
         val info = resolveApiServerInfo()
         withContext(Dispatchers.IO) {
-          http.configureUrlApiModel(info, current.first, current.second)
+          http.configureUrlApiModel(info, current.first, current.second, currentModelProviderProfiles())
         }
       }.onSuccess {
         _state.update { state ->
@@ -908,7 +912,7 @@ class HanakoChatController(
       if (info != null) {
         runCatching {
           withLocalHanakoRetry(info) { activeInfo ->
-            withContext(Dispatchers.IO) { http.configureUrlApiModel(activeInfo, entry, model) }
+            withContext(Dispatchers.IO) { http.configureUrlApiModel(activeInfo, entry, model, currentModelProviderProfiles()) }
           }
         }.onFailure { error ->
           if (handleHanakoLocalApiFailure(info, error)) return@launch
@@ -954,7 +958,7 @@ class HanakoChatController(
         val providerId = nbgUrlApiProviderId(entry.id)
         runCatching {
           withContext(Dispatchers.IO) {
-            http.configureUrlApiModel(activeInfo, entry, model)
+            http.configureUrlApiModel(activeInfo, entry, model, currentModelProviderProfiles())
             http.switchSessionModel(activeInfo, sessionPath, model.id, providerId)
           }
         }.onFailure { error ->
@@ -1179,7 +1183,7 @@ class HanakoChatController(
         runCatching {
           withLocalHanakoRetry(info) { activeInfo ->
             withContext(Dispatchers.IO) {
-              http.configureUrlApiModel(activeInfo, entry, model)
+              http.configureUrlApiModel(activeInfo, entry, model, currentModelProviderProfiles())
               http.switchSessionModel(activeInfo, sessionPath, model.id, providerId)
             }
           }
@@ -1302,7 +1306,7 @@ class HanakoChatController(
       "/provider", "/providers", "/model" -> {
         learnFromUserTurn(command)
         onEvent(HanakoChatEvent.UserMessage(command))
-        val providers = nbgProfilesForStoredApis(NbgApiStore(appContext).load())
+        val providers = modelProviderProfileStore.load(NbgApiStore(appContext).load())
         _state.update { it.copy(modelProviderProfileState = providers) }
         onEvent(HanakoChatEvent.SystemMessage("ProviderProfile：${providers.profileCount} 个；当前模型 ${_state.value.modelName ?: "未选择"}。"))
         true
@@ -1503,7 +1507,7 @@ class HanakoChatController(
         withLocalHanakoRetry(info) { activeInfo ->
           val providerId = nbgUrlApiProviderId(entry.id)
           withContext(Dispatchers.IO) {
-            http.configureUrlApiModel(activeInfo, entry, model)
+            http.configureUrlApiModel(activeInfo, entry, model, currentModelProviderProfiles())
             val focus = http.createSession(activeInfo, _state.value.sessionPath)
             val switched = http.switchSessionModel(activeInfo, focus.path, model.id, providerId)
             focus to switched
@@ -2404,7 +2408,7 @@ class HanakoChatController(
       runCatching {
         val (activeInfo, sessionPath) = ensureLiveSessionForRequestWithRetry(info)
         withContext(Dispatchers.IO) {
-          http.configureUrlApiModel(activeInfo, entry, model)
+          http.configureUrlApiModel(activeInfo, entry, model, currentModelProviderProfiles())
           http.switchSessionModel(activeInfo, sessionPath, model.id, providerId)
         }
       }.onSuccess { result ->

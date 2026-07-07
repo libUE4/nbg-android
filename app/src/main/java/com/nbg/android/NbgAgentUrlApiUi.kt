@@ -99,6 +99,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -251,6 +252,8 @@ internal fun NbgShellSubPage(
 internal fun NbgUrlApiScreen(
   entries: List<NbgStoredApi>,
   providerProfileState: NbgModelProviderProfileState = NbgModelProviderProfileState(),
+  providerProfileTemplateText: String = "",
+  providerProfileMessage: String = "",
   expertReviewPrompt: String,
   expertReviewSelectedKeys: Set<String>,
   expertReviewRunning: Boolean,
@@ -265,6 +268,10 @@ internal fun NbgUrlApiScreen(
   onToggleExpertReviewModel: (NbgExpertReviewModelRef) -> Unit,
   onRunExpertReview: () -> Unit,
   onCancelExpertReview: () -> Unit,
+  onProviderProfileTemplateChange: (String) -> Unit = {},
+  onImportProviderProfiles: (String) -> Unit = {},
+  onExportProviderProfiles: () -> String = { "" },
+  onClearProviderProfiles: () -> Unit = {},
 ) {
   Box(
     modifier = Modifier
@@ -330,7 +337,15 @@ internal fun NbgUrlApiScreen(
         verticalArrangement = Arrangement.spacedBy(10.dp),
       ) {
         item {
-          NbgUrlApiProviderProfilesCard(providerProfileState)
+          NbgUrlApiProviderProfilesCard(
+            state = providerProfileState,
+            templateText = providerProfileTemplateText,
+            message = providerProfileMessage,
+            onTemplateChange = onProviderProfileTemplateChange,
+            onImport = onImportProviderProfiles,
+            onExport = onExportProviderProfiles,
+            onClear = onClearProviderProfiles,
+          )
         }
         item {
           NbgExpertReviewReadinessCard(
@@ -367,7 +382,15 @@ internal fun NbgUrlApiScreen(
 @Composable
 private fun NbgUrlApiProviderProfilesCard(
   state: NbgModelProviderProfileState,
+  templateText: String,
+  message: String,
+  onTemplateChange: (String) -> Unit,
+  onImport: (String) -> Unit,
+  onExport: () -> String,
+  onClear: () -> Unit,
 ) {
+  val clipboard = LocalClipboardManager.current
+  var dialogMode by remember { mutableStateOf<String?>(null) }
   Surface(
     modifier = Modifier.fillMaxWidth(),
     shape = RoundedCornerShape(16.dp),
@@ -403,6 +426,43 @@ private fun NbgUrlApiProviderProfilesCard(
           )
         }
       }
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        NbgInlineActionButton(
+          label = "导入",
+          icon = Icons.Filled.FolderOpen,
+          onClick = { dialogMode = "import" },
+        )
+        NbgInlineActionButton(
+          label = "导出",
+          icon = Icons.Filled.ContentCopy,
+          onClick = {
+            val exported = onExport()
+            onTemplateChange(exported)
+            clipboard.setText(AnnotatedString(exported))
+            dialogMode = "export"
+          },
+        )
+        NbgInlineActionButton(
+          label = "清空",
+          icon = Icons.Filled.Delete,
+          onClick = {
+            onClear()
+            dialogMode = null
+          },
+        )
+      }
+      if (message.isNotBlank()) {
+        Text(
+          text = message,
+          color = NbgAgentColors.TextMuted,
+          fontSize = 11.sp,
+          maxLines = 2,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
       state.profiles.take(8).forEach { profile ->
         Row(
           modifier = Modifier.fillMaxWidth(),
@@ -437,6 +497,83 @@ private fun NbgUrlApiProviderProfilesCard(
         }
       }
     }
+  }
+  val mode = dialogMode
+  if (mode != null) {
+    AlertDialog(
+      onDismissRequest = { dialogMode = null },
+      containerColor = NbgAgentColors.Drawer,
+      title = {
+        Text(
+          text = if (mode == "import") "导入 ProviderProfile" else "导出 ProviderProfile",
+          color = NbgAgentColors.TextStrong,
+          fontSize = 18.sp,
+        )
+      },
+      text = {
+        Column(
+          modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 460.dp),
+          verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          Text(
+            text = if (mode == "import") {
+              "粘贴只包含 profiles 的 JSON 模板；不会导入 API Key。"
+            } else {
+              "当前用户 ProviderProfile 模板已写入剪贴板。"
+            },
+            color = NbgAgentColors.TextMuted,
+            fontSize = 12.sp,
+            lineHeight = 18.sp,
+          )
+          OutlinedTextField(
+            value = templateText,
+            onValueChange = onTemplateChange,
+            modifier = Modifier
+              .fillMaxWidth()
+              .heightIn(min = 220.dp, max = 360.dp),
+            minLines = 8,
+            maxLines = 16,
+            textStyle = TextStyle(
+              color = NbgAgentColors.CodeText,
+              fontSize = 11.sp,
+              fontFamily = FontFamily.Monospace,
+            ),
+            label = { Text("ProviderProfile JSON") },
+          )
+          if (message.isNotBlank()) {
+            Text(
+              text = message,
+              color = NbgAgentColors.TextMuted,
+              fontSize = 11.sp,
+              maxLines = 3,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
+        }
+      },
+      confirmButton = {
+        TextButton(
+          onClick = {
+            if (mode == "import") {
+              onImport(templateText)
+            } else {
+              val exported = onExport()
+              onTemplateChange(exported)
+              clipboard.setText(AnnotatedString(exported))
+            }
+          },
+        ) {
+          Text(if (mode == "import") "导入" else "复制", color = NbgAgentColors.Primary)
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { dialogMode = null }) {
+          Text("关闭", color = NbgAgentColors.TextMuted)
+        }
+      },
+    )
   }
 }
 

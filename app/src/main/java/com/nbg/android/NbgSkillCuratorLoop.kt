@@ -221,6 +221,7 @@ internal class NbgSkillCuratorAndroidLlmLoop(
   context: Context,
   private val loopStore: NbgSkillCuratorLoopStore = NbgSkillCuratorLoopStore(context),
   private val apiStore: NbgApiStore = NbgApiStore(context),
+  private val providerProfileStore: NbgModelProviderProfileTemplateStore = NbgModelProviderProfileTemplateStore(context),
   private val curatorStore: NbgSkillCuratorStore = NbgSkillCuratorStore(context),
   private val draftStore: NbgLearnedSkillDraftStore = NbgLearnedSkillDraftStore(context),
   private val suggestionQueueStore: NbgSkillCuratorSuggestionQueueStore = NbgSkillCuratorSuggestionQueueStore(context),
@@ -248,6 +249,7 @@ internal class NbgSkillCuratorAndroidLlmLoop(
       snapshot = effectiveSnapshot,
       metadata = curatorStore.load(),
       drafts = draftStore.load(),
+      providerProfiles = providerProfileStore.loadCustomProfiles(),
     )
     if (result.ok) suggestionQueueStore.recordSuggestions(result.suggestions)
     return loopStore.recordLlmReview(result)

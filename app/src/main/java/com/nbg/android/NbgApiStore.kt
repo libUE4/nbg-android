@@ -274,9 +274,16 @@ class NbgUpstreamApiClient {
     .build()
 
   suspend fun fetchModels(baseUrl: String, apiKey: String): NbgApiModelFetchResult =
+    fetchModels(baseUrl, apiKey, emptyList())
+
+  suspend fun fetchModels(
+    baseUrl: String,
+    apiKey: String,
+    providerProfiles: List<NbgModelProviderProfile>,
+  ): NbgApiModelFetchResult =
     withContext(Dispatchers.IO) {
       val normalized = nbgNormalizeApiBaseUrl(baseUrl)
-      val profile = nbgProfileForUrlApi(normalized)
+      val profile = nbgProfileForUrlApi(normalized, userProfiles = providerProfiles)
       if (normalized.isBlank() || apiKey.isBlank()) {
         return@withContext NbgApiModelFetchResult(emptyList(), "请先填写地址和 API Key")
       }
@@ -313,9 +320,17 @@ class NbgUpstreamApiClient {
     }
 
   suspend fun verifyModel(baseUrl: String, apiKey: String, modelId: String): NbgApiModelVerifyResult =
+    verifyModel(baseUrl, apiKey, modelId, emptyList())
+
+  suspend fun verifyModel(
+    baseUrl: String,
+    apiKey: String,
+    modelId: String,
+    providerProfiles: List<NbgModelProviderProfile>,
+  ): NbgApiModelVerifyResult =
     withContext(Dispatchers.IO) {
       val normalized = nbgNormalizeApiBaseUrl(baseUrl)
-      val profile = nbgProfileForUrlApi(normalized, modelId)
+      val profile = nbgProfileForUrlApi(normalized, modelId, providerProfiles)
       if (normalized.isBlank() || apiKey.isBlank() || modelId.isBlank()) {
         return@withContext NbgApiModelVerifyResult(false, "地址、API Key 和模型不能为空")
       }
@@ -395,6 +410,7 @@ class NbgUpstreamApiClient {
     entry: NbgStoredApi,
     model: NbgApiModel,
     skills: List<HanakoSkillSummary>,
+    providerProfiles: List<NbgModelProviderProfile> = emptyList(),
   ): NbgSkillDescriptionTranslateResult =
     withContext(Dispatchers.IO) {
       val normalized = nbgNormalizeApiBaseUrl(entry.baseUrl)
@@ -409,7 +425,7 @@ class NbgUpstreamApiClient {
         return@withContext NbgSkillDescriptionTranslateResult(emptyMap(), "没有可翻译的 Skill 描述")
       }
       val prompt = buildSkillDescriptionTranslationPrompt(targets)
-      val profile = nbgProfileForUrlApi(normalized, model.id)
+      val profile = nbgProfileForUrlApi(normalized, model.id, providerProfiles)
       val provider = profile.apiMode.ifBlank { nbgHanakoProviderForUrlApi(normalized, model.id) }
       val candidates = if (provider == "anthropic") {
         listOf(nbgApiEndpoint(normalized, "/v1/messages"), nbgApiEndpoint(normalized, "/messages")).distinct()
@@ -469,6 +485,7 @@ class NbgUpstreamApiClient {
     model: NbgApiModel,
     prompt: String,
     systemPrompt: String = "你是只读专家评审模型。不要调用工具，不要要求写文件，只输出评审意见。",
+    providerProfiles: List<NbgModelProviderProfile> = emptyList(),
   ): NbgUrlApiTextGenerationResult =
     withContext(Dispatchers.IO) {
       val normalized = nbgNormalizeApiBaseUrl(entry.baseUrl)
@@ -476,7 +493,7 @@ class NbgUpstreamApiClient {
       if (normalized.isBlank() || entry.apiKey.isBlank() || model.id.isBlank() || cleanPrompt.isBlank()) {
         return@withContext NbgUrlApiTextGenerationResult(false, "", "没有可用的 URL API 模型或评审问题")
       }
-      val profile = nbgProfileForUrlApi(normalized, model.id)
+      val profile = nbgProfileForUrlApi(normalized, model.id, providerProfiles)
       val provider = profile.apiMode.ifBlank { nbgHanakoProviderForUrlApi(normalized, model.id) }
       val candidates = if (provider == "anthropic") {
         listOf(nbgApiEndpoint(normalized, "/v1/messages"), nbgApiEndpoint(normalized, "/messages")).distinct()

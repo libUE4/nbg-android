@@ -69,8 +69,14 @@ internal class HanakoApiClient {
     )
   }
 
-  fun configureUrlApiModel(info: HanakoServerInfo, entry: NbgStoredApi, model: NbgApiModel) {
-    val provider = nbgHanakoProviderForUrlApi(entry.baseUrl, model.id)
+  fun configureUrlApiModel(
+    info: HanakoServerInfo,
+    entry: NbgStoredApi,
+    model: NbgApiModel,
+    providerProfiles: List<NbgModelProviderProfile> = emptyList(),
+  ) {
+    val profile = nbgProfileForUrlApi(entry.baseUrl, model.id, providerProfiles)
+    val provider = profile.apiMode.ifBlank { nbgHanakoProviderForUrlApi(entry.baseUrl, model.id) }
     val providerId = nbgUrlApiProviderId(entry.id)
     val modelIds = listOf(model.id.trim()).filter { it.isNotBlank() }
     val providerApi = when (provider) {
@@ -81,7 +87,12 @@ internal class HanakoApiClient {
     val staleProviders = findStaleUrlApiProviders(info, entry, providerId)
     val modelConfigs = JSONArray(modelIds.map { modelId ->
       val storedModel = entry.models.firstOrNull { it.id == modelId }
-      val thinkingLevels = nbgSupportedThinkingLevelsForModel(modelId, providerId, baseUrl, providerApi)
+      val inferredThinkingLevels = nbgSupportedThinkingLevelsForModel(modelId, providerId, baseUrl, providerApi)
+      val thinkingLevels = if (inferredThinkingLevels.isEmpty() && profile.supportsThinking) {
+        listOf("low", "medium", "high")
+      } else {
+        inferredThinkingLevels
+      }
       val thinkingSource = nbgThinkingSourceForModel(modelId, providerId, baseUrl, providerApi)
       val contextWindow = nbgEffectiveModelContextWindow(modelId, storedModel?.contextWindow ?: 0L)
       val thinkingFormat = when (thinkingSource) {
