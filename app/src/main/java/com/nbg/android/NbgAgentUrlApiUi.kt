@@ -89,6 +89,7 @@ import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -254,6 +255,7 @@ internal fun NbgUrlApiScreen(
   providerProfileState: NbgModelProviderProfileState = NbgModelProviderProfileState(),
   providerProfileTemplateText: String = "",
   providerProfileMessage: String = "",
+  editableProviderProfileIds: Set<String> = emptySet(),
   expertReviewPrompt: String,
   expertReviewSelectedKeys: Set<String>,
   expertReviewRunning: Boolean,
@@ -272,6 +274,8 @@ internal fun NbgUrlApiScreen(
   onImportProviderProfiles: (String) -> Unit = {},
   onExportProviderProfiles: () -> String = { "" },
   onClearProviderProfiles: () -> Unit = {},
+  onSaveProviderProfile: (String, NbgModelProviderProfile) -> Unit = { _, _ -> },
+  onDeleteProviderProfile: (String) -> Unit = {},
 ) {
   Box(
     modifier = Modifier
@@ -341,10 +345,13 @@ internal fun NbgUrlApiScreen(
             state = providerProfileState,
             templateText = providerProfileTemplateText,
             message = providerProfileMessage,
+            editableProfileIds = editableProviderProfileIds,
             onTemplateChange = onProviderProfileTemplateChange,
             onImport = onImportProviderProfiles,
             onExport = onExportProviderProfiles,
             onClear = onClearProviderProfiles,
+            onSaveProfile = onSaveProviderProfile,
+            onDeleteProfile = onDeleteProviderProfile,
           )
         }
         item {
@@ -384,13 +391,17 @@ private fun NbgUrlApiProviderProfilesCard(
   state: NbgModelProviderProfileState,
   templateText: String,
   message: String,
+  editableProfileIds: Set<String>,
   onTemplateChange: (String) -> Unit,
   onImport: (String) -> Unit,
   onExport: () -> String,
   onClear: () -> Unit,
+  onSaveProfile: (String, NbgModelProviderProfile) -> Unit,
+  onDeleteProfile: (String) -> Unit,
 ) {
   val clipboard = LocalClipboardManager.current
   var dialogMode by remember { mutableStateOf<String?>(null) }
+  var editingDraft by remember { mutableStateOf<NbgProviderProfileEditorDraft?>(null) }
   Surface(
     modifier = Modifier.fillMaxWidth(),
     shape = RoundedCornerShape(16.dp),
@@ -427,9 +438,16 @@ private fun NbgUrlApiProviderProfilesCard(
         }
       }
       Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+          .fillMaxWidth()
+          .horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
       ) {
+        NbgInlineActionButton(
+          label = "新增",
+          icon = Icons.Filled.Add,
+          onClick = { editingDraft = NbgProviderProfileEditorDraft() },
+        )
         NbgInlineActionButton(
           label = "导入",
           icon = Icons.Filled.FolderOpen,
@@ -464,8 +482,17 @@ private fun NbgUrlApiProviderProfilesCard(
         )
       }
       state.profiles.take(8).forEach { profile ->
+        val editable = profile.id in editableProfileIds
         Row(
-          modifier = Modifier.fillMaxWidth(),
+          modifier = Modifier
+            .fillMaxWidth()
+            .then(
+              if (editable) {
+                Modifier.clickable { editingDraft = profile.toProviderProfileEditorDraft() }
+              } else {
+                Modifier
+              },
+            ),
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -494,6 +521,13 @@ private fun NbgUrlApiProviderProfilesCard(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
           )
+          if (editable) {
+            NbgPlainIconButton(
+              icon = Icons.Filled.Edit,
+              contentDescription = "编辑 ProviderProfile",
+              onClick = { editingDraft = profile.toProviderProfileEditorDraft() },
+            )
+          }
         }
       }
     }
@@ -575,6 +609,219 @@ private fun NbgUrlApiProviderProfilesCard(
       },
     )
   }
+  editingDraft?.let { draft ->
+    NbgProviderProfileEditorDialog(
+      draft = draft,
+      onDraftChange = { editingDraft = it },
+      onSave = { originalId, profile ->
+        onSaveProfile(originalId, profile)
+        editingDraft = null
+      },
+      onDelete = { id ->
+        onDeleteProfile(id)
+        editingDraft = null
+      },
+      onDismiss = { editingDraft = null },
+    )
+  }
+}
+
+private data class NbgProviderProfileEditorDraft(
+  val originalId: String = "",
+  val id: String = "",
+  val label: String = "",
+  val baseUrlHint: String = "",
+  val authHeader: String = "Authorization",
+  val authPrefix: String = "Bearer ",
+  val modelsPath: String = "/v1/models",
+  val chatPath: String = "/v1/chat/completions",
+  val apiMode: String = "openai",
+  val defaultModel: String = "",
+  val supportsThinking: Boolean = false,
+  val extraBodyJson: String = "",
+)
+
+private fun NbgModelProviderProfile.toProviderProfileEditorDraft(): NbgProviderProfileEditorDraft =
+  NbgProviderProfileEditorDraft(
+    originalId = id,
+    id = id,
+    label = label,
+    baseUrlHint = baseUrlHint,
+    authHeader = authHeader,
+    authPrefix = authPrefix,
+    modelsPath = modelsPath,
+    chatPath = chatPath,
+    apiMode = apiMode,
+    defaultModel = defaultModel,
+    supportsThinking = supportsThinking,
+    extraBodyJson = extraBodyJson,
+  )
+
+private fun NbgProviderProfileEditorDraft.toProviderProfile(): NbgModelProviderProfile =
+  NbgModelProviderProfile(
+    id = id,
+    label = label,
+    baseUrlHint = baseUrlHint,
+    authHeader = authHeader,
+    authPrefix = authPrefix,
+    modelsPath = modelsPath,
+    chatPath = chatPath,
+    apiMode = apiMode,
+    defaultModel = defaultModel,
+    supportsThinking = supportsThinking,
+    extraBodyJson = extraBodyJson,
+  )
+
+@Composable
+private fun NbgProviderProfileEditorDialog(
+  draft: NbgProviderProfileEditorDraft,
+  onDraftChange: (NbgProviderProfileEditorDraft) -> Unit,
+  onSave: (String, NbgModelProviderProfile) -> Unit,
+  onDelete: (String) -> Unit,
+  onDismiss: () -> Unit,
+) {
+  var localMessage by remember(draft.originalId) { mutableStateOf("") }
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    containerColor = NbgAgentColors.Drawer,
+    title = {
+      Text(
+        text = if (draft.originalId.isBlank()) "新增 ProviderProfile" else "编辑 ProviderProfile",
+        color = NbgAgentColors.TextStrong,
+        fontSize = 18.sp,
+      )
+    },
+    text = {
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .heightIn(max = 560.dp)
+          .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        NbgProviderProfileTextField("ID", draft.id) { onDraftChange(draft.copy(id = it)); localMessage = "" }
+        NbgProviderProfileTextField("名称", draft.label) { onDraftChange(draft.copy(label = it)); localMessage = "" }
+        NbgProviderProfileTextField("baseUrlHint", draft.baseUrlHint) { onDraftChange(draft.copy(baseUrlHint = it)); localMessage = "" }
+        NbgProviderProfileTextField("authHeader", draft.authHeader) { onDraftChange(draft.copy(authHeader = it)); localMessage = "" }
+        NbgProviderProfileTextField("authPrefix", draft.authPrefix) { onDraftChange(draft.copy(authPrefix = it)); localMessage = "" }
+        NbgProviderProfileTextField("modelsPath", draft.modelsPath) { onDraftChange(draft.copy(modelsPath = it)); localMessage = "" }
+        NbgProviderProfileTextField("chatPath", draft.chatPath) { onDraftChange(draft.copy(chatPath = it)); localMessage = "" }
+        NbgProviderProfileTextField("defaultModel", draft.defaultModel) { onDraftChange(draft.copy(defaultModel = it)); localMessage = "" }
+        Text(
+          text = "API 模式",
+          color = NbgAgentColors.TextMuted,
+          fontSize = 11.sp,
+          maxLines = 1,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          NbgInlineActionButton(
+            label = "OpenAI",
+            icon = Icons.Filled.CheckCircle,
+            primary = draft.apiMode == "openai",
+            onClick = { onDraftChange(draft.copy(apiMode = "openai")); localMessage = "" },
+          )
+          NbgInlineActionButton(
+            label = "Anthropic",
+            icon = Icons.Filled.CheckCircle,
+            primary = draft.apiMode == "anthropic",
+            onClick = { onDraftChange(draft.copy(apiMode = "anthropic")); localMessage = "" },
+          )
+        }
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onDraftChange(draft.copy(supportsThinking = !draft.supportsThinking)); localMessage = "" },
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          Checkbox(
+            checked = draft.supportsThinking,
+            onCheckedChange = { checked ->
+              onDraftChange(draft.copy(supportsThinking = checked))
+              localMessage = ""
+            },
+          )
+          Text(
+            text = "支持 thinking 参数",
+            color = NbgAgentColors.TextStrong,
+            fontSize = 13.sp,
+          )
+        }
+        OutlinedTextField(
+          value = draft.extraBodyJson,
+          onValueChange = {
+            onDraftChange(draft.copy(extraBodyJson = it))
+            localMessage = ""
+          },
+          modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 92.dp),
+          minLines = 3,
+          maxLines = 8,
+          textStyle = TextStyle(
+            color = NbgAgentColors.CodeText,
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+          ),
+          label = { Text("extraBodyJson") },
+        )
+        if (localMessage.isNotBlank()) {
+          Text(
+            text = localMessage,
+            color = NbgAgentColors.ToolMutedDanger,
+            fontSize = 12.sp,
+            lineHeight = 18.sp,
+          )
+        }
+      }
+    },
+    confirmButton = {
+      TextButton(
+        onClick = {
+          val profile = draft.toProviderProfile()
+          val review = nbgReviewModelProviderProfileTemplate(profile)
+          if (review.ok) {
+            onSave(draft.originalId, profile)
+          } else {
+            localMessage = review.message
+          }
+        },
+      ) {
+        Text("保存", color = NbgAgentColors.Primary)
+      }
+    },
+    dismissButton = {
+      Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (draft.originalId.isNotBlank()) {
+          TextButton(onClick = { onDelete(draft.originalId) }) {
+            Text("删除", color = NbgAgentColors.ToolMutedDanger)
+          }
+        }
+        TextButton(onClick = onDismiss) {
+          Text("关闭", color = NbgAgentColors.TextMuted)
+        }
+      }
+    },
+  )
+}
+
+@Composable
+private fun NbgProviderProfileTextField(
+  label: String,
+  value: String,
+  onValueChange: (String) -> Unit,
+) {
+  OutlinedTextField(
+    value = value,
+    onValueChange = onValueChange,
+    modifier = Modifier.fillMaxWidth(),
+    singleLine = true,
+    textStyle = TextStyle(
+      color = NbgAgentColors.TextStrong,
+      fontSize = 13.sp,
+    ),
+    label = { Text(label) },
+  )
 }
 
 @Composable

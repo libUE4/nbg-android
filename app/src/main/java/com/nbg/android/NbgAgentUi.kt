@@ -213,6 +213,7 @@ fun NbgAndroidShell(
   var providerProfileState by remember { mutableStateOf(providerProfileStore.load(savedApis)) }
   var providerProfileTemplateText by remember { mutableStateOf("") }
   var providerProfileMessage by remember { mutableStateOf("") }
+  var editableProviderProfileIds by remember { mutableStateOf(providerProfileStore.loadCustomProfiles().map { it.id }.toSet()) }
   val apiEditor = rememberNbgAgentApiEditorState()
   val expertReviewState = remember { NbgAgentExpertReviewState() }
   val skillTranslationState = remember { NbgAgentSkillTranslationState() }
@@ -226,13 +227,15 @@ fun NbgAndroidShell(
   val flushSchedulerState = remember { NbgAgentFlushSchedulerState() }
   val todoState = remember { NbgAgentTodoState() }
   val userMessageDedupState = remember { NbgAgentUserMessageDedupState() }
+  fun refreshProviderProfileState(entries: List<NbgStoredApi> = savedApis) {
+    val customProfiles = providerProfileStore.loadCustomProfiles()
+    providerProfileState = nbgProfilesForStoredApis(entries, customProfiles)
+    editableProviderProfileIds = customProfiles.map { it.id }.toSet()
+  }
   fun loadSavedApis() {
     val loaded = apiStore.load()
     urlApiEntriesState.applyLoaded(loaded)
-    providerProfileState = providerProfileStore.load(loaded)
-  }
-  fun refreshProviderProfileState(entries: List<NbgStoredApi> = savedApis) {
-    providerProfileState = providerProfileStore.load(entries)
+    refreshProviderProfileState(loaded)
   }
   fun loadChatPreferences() {
     chatPreferenceState.applyLoaded(chatPreferenceStore.load())
@@ -1577,6 +1580,7 @@ fun NbgAndroidShell(
         providerProfileState = providerProfileState,
         providerProfileTemplateText = providerProfileTemplateText,
         providerProfileMessage = providerProfileMessage,
+        editableProviderProfileIds = editableProviderProfileIds,
         expertReviewPrompt = expertReviewState.prompt,
         expertReviewSelectedKeys = expertReviewState.selectedModelKeys,
         expertReviewRunning = expertReviewState.running,
@@ -1616,6 +1620,26 @@ fun NbgAndroidShell(
           refreshProviderProfileState(savedApis)
           providerProfileTemplateText = ""
           providerProfileMessage = "已清空用户 ProviderProfile"
+        },
+        onSaveProviderProfile = { originalId, profile ->
+          val review = nbgReviewModelProviderProfileTemplate(profile)
+          if (!review.ok) {
+            providerProfileMessage = review.message
+          } else {
+            if (originalId.isNotBlank() && originalId != profile.id.trim()) {
+              providerProfileStore.deleteProfile(originalId)
+            }
+            providerProfileStore.saveProfile(profile)
+            refreshProviderProfileState(savedApis)
+            providerProfileTemplateText = providerProfileStore.exportTemplates()
+            providerProfileMessage = "已保存 ${profile.label.trim().ifBlank { profile.id.trim() }} ProviderProfile"
+          }
+        },
+        onDeleteProviderProfile = { id ->
+          providerProfileStore.deleteProfile(id)
+          refreshProviderProfileState(savedApis)
+          providerProfileTemplateText = providerProfileStore.exportTemplates()
+          providerProfileMessage = "已删除 $id ProviderProfile"
         },
       )
       NbgShellPage.ToolsetsDoctor -> NbgToolsetsDoctorScreen(

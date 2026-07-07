@@ -185,6 +185,27 @@ class NbgHermesAdvancedParityTest {
   }
 
   @Test
+  fun providerProfileTemplateReviewRejectsUnsafeEditorInput() {
+    val valid = NbgModelProviderProfile(
+      id = "acme-openai",
+      label = "Acme OpenAI",
+      baseUrlHint = "api.acme.ai",
+      modelsPath = "/models",
+      chatPath = "/chat/completions",
+      apiMode = "openai",
+      extraBodyJson = """{"routing":"fast"}""",
+    )
+    val secret = valid.copy(extraBodyJson = """{"api_key":"secret"}""")
+    val invalidPath = valid.copy(modelsPath = "models")
+    val invalidMode = valid.copy(apiMode = "custom")
+
+    assertTrue(nbgReviewModelProviderProfileTemplate(valid).ok)
+    assertEquals(false, nbgReviewModelProviderProfileTemplate(secret).ok)
+    assertEquals(false, nbgReviewModelProviderProfileTemplate(invalidPath).ok)
+    assertEquals(false, nbgReviewModelProviderProfileTemplate(invalidMode).ok)
+  }
+
+  @Test
   fun contextInsightsSummarizeUsageLearningAndCompressionAdvice() {
     val insights = nbgBuildContextInsights(
       usage = NbgContextUsageSnapshot(totalTokens = 80_000, contextLimit = 100_000, percentUsed = 80, compressionAvailable = true),

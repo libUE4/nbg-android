@@ -31,6 +31,11 @@ data class NbgModelProviderProfileState(
     get() = profiles.size
 }
 
+data class NbgModelProviderProfileTemplateReview(
+  val ok: Boolean,
+  val message: String,
+)
+
 internal fun nbgProfilesForStoredApis(entries: List<NbgStoredApi>): NbgModelProviderProfileState {
   return nbgProfilesForStoredApis(entries, emptyList())
 }
@@ -96,6 +101,27 @@ internal class NbgModelProviderProfileTemplateStore(context: Context) {
     return NbgModelProviderProfileState(profiles = profiles)
   }
 
+  fun saveProfile(profile: NbgModelProviderProfile): NbgModelProviderProfileState {
+    val review = nbgReviewModelProviderProfileTemplate(profile)
+    if (!review.ok) return NbgModelProviderProfileState(profiles = loadCustomProfiles())
+    val clean = profile.sanitizedForTemplate()
+    val current = loadCustomProfiles()
+    val next = if (current.any { it.id == clean.id }) {
+      current.map { if (it.id == clean.id) clean else it }
+    } else {
+      current + clean
+    }
+    prefs.edit().putString(KEY_PROFILES, NbgModelProviderProfileState(profiles = next).toJsonString()).apply()
+    return NbgModelProviderProfileState(profiles = next)
+  }
+
+  fun deleteProfile(id: String): NbgModelProviderProfileState {
+    val target = id.trim()
+    val next = loadCustomProfiles().filterNot { it.id == target }
+    prefs.edit().putString(KEY_PROFILES, NbgModelProviderProfileState(profiles = next).toJsonString()).apply()
+    return NbgModelProviderProfileState(profiles = next)
+  }
+
   fun clear(): NbgModelProviderProfileState {
     prefs.edit().remove(KEY_PROFILES).apply()
     return NbgModelProviderProfileState(profiles = emptyList())
@@ -142,6 +168,28 @@ internal fun nbgParseCustomModelProviderProfiles(raw: String?): List<NbgModelPro
       .filter { it.id.isNotBlank() && it.label.isNotBlank() }
       .distinctBy { it.id }
   }.getOrDefault(emptyList())
+
+internal fun nbgReviewModelProviderProfileTemplate(profile: NbgModelProviderProfile): NbgModelProviderProfileTemplateReview {
+  val id = profile.id.trim()
+  val label = profile.label.trim()
+  val baseUrlHint = profile.baseUrlHint.trim()
+  val apiMode = profile.apiMode.trim()
+  val modelsPath = profile.modelsPath.trim()
+  val chatPath = profile.chatPath.trim()
+  val extra = profile.extraBodyJson.trim()
+  return when {
+    id.isBlank() -> NbgModelProviderProfileTemplateReview(false, "ProviderProfile id 不能为空")
+    !id.matches(Regex("[A-Za-z0-9._-]{1,100}")) -> NbgModelProviderProfileTemplateReview(false, "ProviderProfile id 只能包含字母、数字、点、下划线和短横线")
+    label.isBlank() -> NbgModelProviderProfileTemplateReview(false, "ProviderProfile 名称不能为空")
+    baseUrlHint.isBlank() -> NbgModelProviderProfileTemplateReview(false, "baseUrlHint 不能为空")
+    apiMode !in setOf("openai", "anthropic") -> NbgModelProviderProfileTemplateReview(false, "apiMode 只能是 openai 或 anthropic")
+    !modelsPath.startsWith("/") -> NbgModelProviderProfileTemplateReview(false, "modelsPath 必须以 / 开头")
+    !chatPath.startsWith("/") -> NbgModelProviderProfileTemplateReview(false, "chatPath 必须以 / 开头")
+    extra.isNotBlank() && !extra.isJsonObjectText() -> NbgModelProviderProfileTemplateReview(false, "extraBodyJson 必须是 JSON object")
+    extra.sensitiveProfileKeys().isNotEmpty() -> NbgModelProviderProfileTemplateReview(false, "extraBodyJson 不能包含 API Key、Authorization 或 token 字段")
+    else -> NbgModelProviderProfileTemplateReview(true, "ProviderProfile 可保存")
+  }
+}
 
 internal fun nbgMergeModelProviderProfiles(
   vararg profileLists: List<NbgModelProviderProfile>,
@@ -218,19 +266,33 @@ private fun String.sanitizedExtraBodyJson(): String {
   if (raw.isBlank()) return ""
   return runCatching {
     val extra = JSONObject(raw)
-    listOf(
-      "apiKey",
-      "api_key",
-      "api-key",
-      "authorization",
-      "Authorization",
-      "x-api-key",
-      "token",
-      "access_token",
-    ).forEach { key -> extra.remove(key) }
+    NBG_MODEL_PROVIDER_SECRET_FIELD_NAMES.forEach { key -> extra.remove(key) }
     extra.toString().takeIf { it != "{}" }.orEmpty()
   }.getOrDefault("")
 }
+
+private fun String.isJsonObjectText(): Boolean =
+  runCatching { JSONObject(trim()) }.isSuccess
+
+private fun String.sensitiveProfileKeys(): Set<String> {
+  val raw = trim()
+  if (raw.isBlank()) return emptySet()
+  return runCatching {
+    val extra = JSONObject(raw)
+    NBG_MODEL_PROVIDER_SECRET_FIELD_NAMES.filter { extra.has(it) }.toSet()
+  }.getOrDefault(emptySet())
+}
+
+private val NBG_MODEL_PROVIDER_SECRET_FIELD_NAMES = setOf(
+  "apiKey",
+  "api_key",
+  "api-key",
+  "authorization",
+  "Authorization",
+  "x-api-key",
+  "token",
+  "access_token",
+)
 
 private fun NbgModelProviderProfile.toJson(): JSONObject =
   JSONObject()
