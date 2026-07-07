@@ -250,6 +250,7 @@ internal fun NbgShellSubPage(
 @Composable
 internal fun NbgUrlApiScreen(
   entries: List<NbgStoredApi>,
+  providerProfileState: NbgModelProviderProfileState = NbgModelProviderProfileState(),
   expertReviewPrompt: String,
   expertReviewSelectedKeys: Set<String>,
   expertReviewRunning: Boolean,
@@ -329,6 +330,9 @@ internal fun NbgUrlApiScreen(
         verticalArrangement = Arrangement.spacedBy(10.dp),
       ) {
         item {
+          NbgUrlApiProviderProfilesCard(providerProfileState)
+        }
+        item {
           NbgExpertReviewReadinessCard(
             entries = entries,
             prompt = expertReviewPrompt,
@@ -354,6 +358,82 @@ internal fun NbgUrlApiScreen(
               onDelete = { onDelete(entry) },
             )
           }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun NbgUrlApiProviderProfilesCard(
+  state: NbgModelProviderProfileState,
+) {
+  Surface(
+    modifier = Modifier.fillMaxWidth(),
+    shape = RoundedCornerShape(16.dp),
+    color = NbgAgentColors.Drawer,
+    border = BorderStroke(1.dp, NbgAgentColors.InputBorder),
+  ) {
+    Column(
+      modifier = Modifier.padding(horizontal = 13.dp, vertical = 12.dp),
+      verticalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Icon(
+          imageVector = Icons.Filled.Settings,
+          contentDescription = null,
+          tint = NbgAgentColors.Primary,
+          modifier = Modifier.size(18.dp),
+        )
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+          Text(
+            text = "Provider Profiles",
+            color = NbgAgentColors.TextStrong,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+          Text(
+            text = "${state.profileCount} 个 provider profile · auth/model/extra body 边界",
+            color = NbgAgentColors.TextMuted,
+            fontSize = 11.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
+      }
+      state.profiles.take(8).forEach { profile ->
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          Text(
+            text = profile.label,
+            color = NbgAgentColors.TextStrong,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(0.34f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+          Text(
+            text = listOf(profile.apiMode, "thinking".takeIf { profile.supportsThinking }).filterNotNull().joinToString(" · "),
+            color = NbgAgentColors.TextMuted,
+            fontSize = 10.5.sp,
+            modifier = Modifier.weight(0.26f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+          Text(
+            text = profile.baseUrlHint.ifBlank { "custom endpoint" },
+            color = NbgAgentColors.CodeText,
+            fontSize = 10.5.sp,
+            modifier = Modifier.weight(0.4f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
         }
       }
     }

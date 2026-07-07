@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.History
@@ -47,6 +48,8 @@ internal fun NbgAutonomousLearningScreen(
   snapshot: NbgAutonomousLearningSnapshot,
   scheduleState: NbgScheduleState,
   gatewayInboxState: NbgGatewayInboxState,
+  externalMemoryProviderState: NbgExternalMemoryProviderState = NbgExternalMemoryProviderState(),
+  contextInsights: NbgContextInsights = NbgContextInsights(),
   trajectoryExportBundle: NbgTrajectoryExportBundle?,
   onBack: () -> Unit,
   onOpenDrawer: () -> Unit,
@@ -54,11 +57,15 @@ internal fun NbgAutonomousLearningScreen(
   onCreateSchedule: (NbgScheduledAutomationTemplate) -> Unit,
   onToggleSchedule: (String, Boolean) -> Unit,
   onRunScheduleNow: (String) -> Unit,
+  onSaveMemoryProvider: (NbgExternalMemoryProviderConfig) -> Unit,
+  onToggleMemoryProvider: (String, Boolean) -> Unit,
   onArchiveGatewayMessage: (String) -> Unit,
   onBuildTrajectoryExport: () -> Unit,
   onShareTrajectoryExport: () -> Unit,
   onClearTrajectoryExport: () -> Unit,
   onBuildRecall: () -> Unit,
+  onRefreshContextInsights: () -> Unit,
+  onCompressContext: () -> Unit,
   onApproveEvent: (String) -> Unit,
   onRejectEvent: (String) -> Unit,
   onRevertEvent: (String) -> Unit,
@@ -70,6 +77,9 @@ internal fun NbgAutonomousLearningScreen(
   var editTarget by remember { mutableStateOf<NbgLearningGraphNode?>(null) }
   var editText by remember { mutableStateOf("") }
   var deleteTarget by remember { mutableStateOf<NbgLearningGraphNode?>(null) }
+  var providerEditTarget by remember { mutableStateOf<NbgExternalMemoryProviderConfig?>(null) }
+  var providerEndpoint by remember { mutableStateOf("") }
+  var providerAccount by remember { mutableStateOf("") }
   NbgShellSubPage(
     title = "Learning",
     subtitle = "Hermes 风格自主学习 · 本地审计",
@@ -87,6 +97,13 @@ internal fun NbgAutonomousLearningScreen(
         NbgLearningOverviewCard(snapshot = snapshot, onReload = onReload)
       }
       item {
+        NbgContextInsightsCard(
+          insights = contextInsights,
+          onRefresh = onRefreshContextInsights,
+          onCompress = onCompressContext,
+        )
+      }
+      item {
         NbgLearningGraphCard(
           graph = snapshot.graph,
           onBuildRecall = onBuildRecall,
@@ -99,6 +116,17 @@ internal fun NbgAutonomousLearningScreen(
       }
       item {
         NbgLearningRecallCard(snapshot.recallBundle)
+      }
+      item {
+        NbgMemoryProviderPluginsCard(
+          state = externalMemoryProviderState,
+          onConfigure = { provider ->
+            providerEditTarget = provider
+            providerEndpoint = provider.endpoint
+            providerAccount = provider.accountLabel
+          },
+          onToggle = onToggleMemoryProvider,
+        )
       }
       item {
         NbgLearningStoresCard(
@@ -190,6 +218,132 @@ internal fun NbgAutonomousLearningScreen(
         TextButton(onClick = { deleteTarget = null }) { Text("取消") }
       },
     )
+  }
+  providerEditTarget?.let { provider ->
+    AlertDialog(
+      onDismissRequest = { providerEditTarget = null },
+      title = { Text("配置 ${provider.displayName}") },
+      text = {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          OutlinedTextField(
+            value = providerEndpoint,
+            onValueChange = { providerEndpoint = it },
+            label = { Text("Endpoint") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+          )
+          OutlinedTextField(
+            value = providerAccount,
+            onValueChange = { providerAccount = it },
+            label = { Text("Account label") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+          )
+        }
+      },
+      confirmButton = {
+        TextButton(onClick = {
+          onSaveMemoryProvider(provider.copy(endpoint = providerEndpoint, accountLabel = providerAccount))
+          providerEditTarget = null
+        }) { Text("保存") }
+      },
+      dismissButton = {
+        TextButton(onClick = { providerEditTarget = null }) { Text("取消") }
+      },
+    )
+  }
+}
+
+@Composable
+private fun NbgContextInsightsCard(
+  insights: NbgContextInsights,
+  onRefresh: () -> Unit,
+  onCompress: () -> Unit,
+) {
+  NbgLearningCard {
+    Text(
+      text = "Context Insights",
+      color = NbgAgentColors.TextStrong,
+      fontSize = 15.sp,
+      fontWeight = FontWeight.SemiBold,
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+      NbgLearningMetric("用量", insights.usage.percentUsed, NbgAgentColors.Primary, Modifier.weight(1f))
+      NbgLearningMetric("会话", insights.sessionCount, NbgAgentColors.StatusGreen, Modifier.weight(1f))
+      NbgLearningMetric("学习项", insights.learningItemCount, NbgAgentColors.StatusYellow, Modifier.weight(1f))
+    }
+    Text(
+      text = "${insights.usage.label} · ${insights.suggestion}",
+      color = NbgAgentColors.TextMuted,
+      fontSize = 11.sp,
+      lineHeight = 15.sp,
+      maxLines = 2,
+      overflow = TextOverflow.Ellipsis,
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      NbgInlineActionButton(label = "刷新", icon = Icons.Filled.Refresh, onClick = onRefresh)
+      NbgInlineActionButton(label = "压缩", icon = Icons.AutoMirrored.Filled.Undo, enabled = insights.usage.compressionAvailable, onClick = onCompress)
+    }
+  }
+}
+
+@Composable
+private fun NbgMemoryProviderPluginsCard(
+  state: NbgExternalMemoryProviderState,
+  onConfigure: (NbgExternalMemoryProviderConfig) -> Unit,
+  onToggle: (String, Boolean) -> Unit,
+) {
+  NbgLearningCard {
+    Text(
+      text = "Memory Providers",
+      color = NbgAgentColors.TextStrong,
+      fontSize = 15.sp,
+      fontWeight = FontWeight.SemiBold,
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+      NbgLearningMetric("Provider", state.providers.size, NbgAgentColors.Primary, Modifier.weight(1f))
+      NbgLearningMetric("启用", state.enabledCount, NbgAgentColors.StatusGreen, Modifier.weight(1f))
+      NbgLearningMetric("关闭", state.disabledCount, NbgAgentColors.TextMuted, Modifier.weight(1f))
+    }
+    state.providers.forEach { provider ->
+      Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = NbgAgentColors.SurfaceLow,
+        border = BorderStroke(1.dp, NbgAgentColors.InputBorder),
+      ) {
+        Row(
+          modifier = Modifier.padding(horizontal = 9.dp, vertical = 8.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+              text = provider.displayName,
+              color = NbgAgentColors.TextStrong,
+              fontSize = 12.sp,
+              fontWeight = FontWeight.SemiBold,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+              text = listOf(provider.statusLabel, provider.endpoint.ifBlank { "未配置 endpoint" }).joinToString(" · "),
+              color = if (provider.enabled) NbgAgentColors.StatusGreen else NbgAgentColors.TextMuted,
+              fontSize = 10.5.sp,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
+          NbgInlineActionButton(label = "配置", icon = Icons.Filled.Memory, onClick = { onConfigure(provider) })
+          NbgInlineActionButton(
+            label = if (provider.enabled) "关闭" else "启用",
+            icon = if (provider.enabled) Icons.Filled.Close else Icons.Filled.CheckCircle,
+            enabled = provider.endpoint.isNotBlank(),
+            onClick = { onToggle(provider.id, !provider.enabled) },
+          )
+        }
+      }
+    }
   }
 }
 

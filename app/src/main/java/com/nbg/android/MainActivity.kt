@@ -109,6 +109,7 @@ class MainActivity : ComponentActivity() {
     HanakoBackgroundWarmup.start(this)
     HanakoForegroundServiceController.start(this)
     NbgScheduleWorkManager.ensureScheduled(this)
+    NbgSkillCuratorLoopWorkManager.ensureScheduled(this)
     setContent {
       NbgAndroidApp(
         initialPageName = initialPageName,

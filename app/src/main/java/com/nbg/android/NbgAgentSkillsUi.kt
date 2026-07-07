@@ -55,6 +55,8 @@ internal fun NbgSkillsScreen(
   snapshot: HanakoSkillsSnapshot,
   rawSnapshot: HanakoSkillsSnapshot = snapshot,
   skillCuratorMetadata: NbgSkillCuratorMetadata = NbgSkillCuratorMetadata(),
+  skillCuratorLoopState: NbgSkillCuratorLoopState = NbgSkillCuratorLoopState(),
+  skillDiffPreview: NbgSkillDiffPreview? = null,
   learnedDraftQueue: NbgLearnedSkillDraftQueue = NbgLearnedSkillDraftQueue(),
   loading: Boolean,
   error: String?,
@@ -78,6 +80,11 @@ internal fun NbgSkillsScreen(
   onArchiveSkill: (String) -> Unit = {},
   onRestoreSkill: (String) -> Unit = {},
   onRunCuratorReview: () -> Unit = {},
+  onSetCuratorLoopEnabled: (Boolean) -> Unit = {},
+  onRunCuratorLoopNow: () -> Unit = {},
+  onPreviewCurrentSkillDiff: (String) -> Unit = {},
+  onApplySkillDiffMerge: (Set<Int>) -> Unit = {},
+  onCloseSkillDiffPreview: () -> Unit = {},
 ) {
   var addOpen by remember { mutableStateOf(false) }
   var deleteTarget by remember { mutableStateOf<HanakoSkillSummary?>(null) }
@@ -121,9 +128,22 @@ internal fun NbgSkillsScreen(
         NbgSkillCuratorCard(
           summary = nbgBuildSkillCuratorSummary(rawSnapshot, skillCuratorMetadata),
           archivedSkills = archivedSkills,
+          loopState = skillCuratorLoopState,
           busy = busyKey != null,
           onRestore = onRestoreSkill,
           onRunReview = onRunCuratorReview,
+          onSetLoopEnabled = onSetCuratorLoopEnabled,
+          onRunLoopNow = onRunCuratorLoopNow,
+        )
+      }
+      item {
+        NbgSkillDiffMergeCard(
+          queue = learnedDraftQueue,
+          preview = skillDiffPreview,
+          busy = busyKey != null,
+          onPreviewSkill = onPreviewCurrentSkillDiff,
+          onApplySelection = onApplySkillDiffMerge,
+          onClosePreview = onCloseSkillDiffPreview,
         )
       }
       item {
@@ -484,12 +504,189 @@ private fun NbgLearnedSkillDraftRow(
 }
 
 @Composable
+private fun NbgSkillDiffMergeCard(
+  queue: NbgLearnedSkillDraftQueue,
+  preview: NbgSkillDiffPreview?,
+  busy: Boolean,
+  onPreviewSkill: (String) -> Unit,
+  onApplySelection: (Set<Int>) -> Unit,
+  onClosePreview: () -> Unit,
+) {
+  val learned = queue.visibleEntries.filter {
+    it.autoInstalled || it.status == NbgLearnedSkillDraftStatus.AutoApplied || it.rollbackPath.isNotBlank()
+  }
+  Surface(
+    modifier = Modifier.fillMaxWidth(),
+    shape = RoundedCornerShape(16.dp),
+    color = NbgAgentColors.Drawer,
+    border = BorderStroke(1.dp, if (preview?.changed == true) NbgAgentColors.PrimarySoft else NbgAgentColors.InputBorder),
+  ) {
+    Column(
+      modifier = Modifier.padding(horizontal = 13.dp, vertical = 12.dp),
+      verticalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        NbgSkillsIconBox(icon = Icons.Filled.Save, active = preview?.changed == true)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+          Text(
+            text = "Skill Diff / Merge",
+            color = NbgAgentColors.TextStrong,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+          Text(
+            text = "${learned.size} 个本地 learned Skill 可审查",
+            color = NbgAgentColors.TextMuted,
+            fontSize = 11.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
+        preview?.let {
+          NbgSkillsStatusPill(
+            text = "${it.hunks.size} hunks",
+            color = if (it.changed) NbgAgentColors.Primary else NbgAgentColors.TextMuted,
+          )
+        }
+      }
+      if (preview == null) {
+        if (learned.isEmpty()) {
+          Text(
+            text = "暂无可审查的本地 learned Skill。自动应用或回滚记录出现后会在这里显示。",
+            color = NbgAgentColors.TextMuted,
+            fontSize = 11.sp,
+            lineHeight = 15.sp,
+          )
+        } else {
+          learned.take(4).forEach { draft ->
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                  text = draft.skillName,
+                  color = NbgAgentColors.TextStrong,
+                  fontSize = 12.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                  text = listOf(draft.status.label, "prev ${draft.previousArtifactSha256.take(12)}".takeIf { draft.previousArtifactSha256.isNotBlank() }).filterNotNull().joinToString(" · "),
+                  color = NbgAgentColors.TextMuted,
+                  fontSize = 10.5.sp,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+              }
+              NbgInlineActionButton(
+                label = "审查",
+                icon = Icons.Filled.Visibility,
+                enabled = !busy,
+                onClick = { onPreviewSkill(draft.skillName) },
+              )
+            }
+          }
+        }
+        return@Column
+      }
+      Text(
+        text = "${preview.skillName} · +${preview.addedCount} / -${preview.removedCount} · ${preview.message.ifBlank { "diff preview" }}",
+        color = NbgAgentColors.TextMuted,
+        fontSize = 11.sp,
+        lineHeight = 15.sp,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+      )
+      preview.hunks.take(3).forEach { hunk ->
+        Surface(
+          modifier = Modifier.fillMaxWidth(),
+          shape = RoundedCornerShape(12.dp),
+          color = NbgAgentColors.SurfaceLow,
+          border = BorderStroke(1.dp, NbgAgentColors.InputBorder),
+        ) {
+          Column(
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+          ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              Text(
+                text = "Hunk ${hunk.index + 1} · +${hunk.addedCount} / -${hunk.removedCount}",
+                color = NbgAgentColors.TextStrong,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+              )
+              NbgInlineActionButton(
+                label = "仅此块",
+                icon = Icons.Filled.Save,
+                enabled = !busy,
+                onClick = { onApplySelection(setOf(hunk.index)) },
+              )
+            }
+            hunk.lines.take(8).forEach { line ->
+              val prefix = when (line.kind) {
+                NbgSkillDiffLineKind.Added -> "+"
+                NbgSkillDiffLineKind.Removed -> "-"
+                NbgSkillDiffLineKind.Context -> " "
+              }
+              Text(
+                text = "$prefix ${line.text}",
+                color = when (line.kind) {
+                  NbgSkillDiffLineKind.Added -> NbgAgentColors.StatusGreen
+                  NbgSkillDiffLineKind.Removed -> NbgAgentColors.StatusRed
+                  NbgSkillDiffLineKind.Context -> NbgAgentColors.CodeText
+                },
+                fontSize = 10.5.sp,
+                fontFamily = FontFamily.Monospace,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+            }
+          }
+        }
+      }
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        NbgInlineActionButton(
+          label = "应用全部",
+          icon = Icons.Filled.Save,
+          enabled = !busy && preview.changed,
+          onClick = { onApplySelection(preview.hunks.map { it.index }.toSet()) },
+        )
+        NbgInlineActionButton(
+          label = "回滚旧版",
+          icon = Icons.Filled.Restore,
+          enabled = !busy && preview.rollbackAvailable,
+          onClick = { onApplySelection(emptySet()) },
+        )
+        NbgInlineActionButton(
+          label = "关闭",
+          icon = Icons.Filled.Block,
+          enabled = !busy,
+          onClick = onClosePreview,
+        )
+      }
+    }
+  }
+}
+
+@Composable
 private fun NbgSkillCuratorCard(
   summary: NbgSkillCuratorSummary,
   archivedSkills: List<NbgSkillCuratorArchivedSkill>,
+  loopState: NbgSkillCuratorLoopState,
   busy: Boolean,
   onRestore: (String) -> Unit,
   onRunReview: () -> Unit,
+  onSetLoopEnabled: (Boolean) -> Unit,
+  onRunLoopNow: () -> Unit,
 ) {
   Surface(
     modifier = Modifier.fillMaxWidth(),
@@ -538,6 +735,28 @@ private fun NbgSkillCuratorCard(
         icon = Icons.Filled.Refresh,
         enabled = !busy,
         onClick = onRunReview,
+      )
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        NbgInlineActionButton(
+          label = if (loopState.enabled) "关闭后台" else "后台复核",
+          icon = if (loopState.enabled) Icons.Filled.Block else Icons.Filled.CheckCircle,
+          enabled = !busy,
+          onClick = { onSetLoopEnabled(!loopState.enabled) },
+        )
+        NbgInlineActionButton(
+          label = "运行循环",
+          icon = Icons.Filled.Refresh,
+          enabled = !busy && loopState.enabled,
+          onClick = onRunLoopNow,
+        )
+      }
+      Text(
+        text = "${loopState.statusLabel} · ${loopState.reviewCount} 次 · 已归档 ${loopState.archivedCount}",
+        color = if (loopState.lastError.isNotBlank()) NbgAgentColors.StatusRed else NbgAgentColors.TextMuted,
+        fontSize = 11.sp,
+        lineHeight = 15.sp,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
       )
       if (summary.mostUsedSkillName.isNotBlank()) {
         Text(

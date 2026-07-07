@@ -52,12 +52,17 @@ class HanakoChatController(
   )
   private val learnedSkillDraftStore = NbgLearnedSkillDraftStore(appContext)
   private val skillCuratorStore = NbgSkillCuratorStore(appContext)
+  private val skillCuratorLoopStore = NbgSkillCuratorLoopStore(appContext)
+  private val skillCuratorLoopRunner = NbgSkillCuratorLoopRunner(appContext)
   private val autonomousLearningEngine = NbgAutonomousLearningEngine(appContext)
   private val memoryProviderManager = NbgMemoryProviderManager(appContext)
+  private val externalMemoryProviderStore = NbgExternalMemoryProviderStore(appContext)
   private val journeyMutations = NbgLearningJourneyMutations(appContext)
   private val skillManage = NbgSkillManage(appContext)
+  private val skillDiffMerge = NbgSkillDiffMerge(appContext)
   private val scheduleStore = NbgScheduleStore(appContext)
   private val gatewayInboxStore = NbgGatewayInboxStore(appContext)
+  private var latestContextUsage = NbgContextUsageSnapshot()
 
   private var serverInfo: HanakoServerInfo? = null
   private var webSocket: WebSocket? = null
@@ -264,9 +269,12 @@ class HanakoChatController(
     restoreLatestCachedSessionOnce()
     loadLearnedSkillDraftQueue()
     loadSkillCuratorMetadata()
+    loadSkillCuratorLoopState()
     loadAutonomousLearningSnapshot()
+    loadExternalMemoryProviderState()
     loadScheduleState()
     loadGatewayInboxState()
+    refreshContextInsights()
     connect(allowLaunch = true)
   }
 
@@ -279,6 +287,7 @@ class HanakoChatController(
       it.copy(
         autonomousLearningSnapshot = snapshot,
         learnedSkillDraftQueue = snapshot.learnedSkillDraftQueue,
+        contextInsights = nbgBuildContextInsights(latestContextUsage, snapshot, it.sessions),
       )
     }
   }
@@ -295,6 +304,7 @@ class HanakoChatController(
         it.copy(
           autonomousLearningSnapshot = snapshot,
           learnedSkillDraftQueue = snapshot.learnedSkillDraftQueue,
+          contextInsights = nbgBuildContextInsights(latestContextUsage, snapshot, it.sessions),
         )
       }
     }
@@ -320,8 +330,31 @@ class HanakoChatController(
         it.copy(
           autonomousLearningSnapshot = snapshot,
           learnedSkillDraftQueue = snapshot.learnedSkillDraftQueue,
+          contextInsights = nbgBuildContextInsights(latestContextUsage, snapshot, it.sessions),
         )
       }
+    }
+  }
+
+  fun loadExternalMemoryProviderState() {
+    _state.update { it.copy(externalMemoryProviderState = externalMemoryProviderStore.load()) }
+  }
+
+  fun setExternalMemoryProviderEnabled(id: String, enabled: Boolean) {
+    _state.update {
+      it.copy(externalMemoryProviderState = externalMemoryProviderStore.setEnabled(id, enabled))
+    }
+  }
+
+  fun saveExternalMemoryProvider(config: NbgExternalMemoryProviderConfig, apiKey: String = "") {
+    _state.update {
+      it.copy(externalMemoryProviderState = externalMemoryProviderStore.save(config, apiKey))
+    }
+  }
+
+  fun refreshContextInsights() {
+    _state.update {
+      it.copy(contextInsights = nbgBuildContextInsights(latestContextUsage, it.autonomousLearningSnapshot, it.sessions))
     }
   }
 
@@ -436,6 +469,32 @@ class HanakoChatController(
     }
     loadLearnedSkillDraftQueue()
     loadAutonomousLearningSnapshot()
+    _state.update { it.copy(skillDiffPreview = skillDiffMerge.preview(request), skillsError = null, lastError = null) }
+  }
+
+  fun previewLocalSkillManage(request: NbgSkillManageRequest) {
+    _state.update { it.copy(skillDiffPreview = skillDiffMerge.preview(request), skillsError = null, lastError = null) }
+  }
+
+  fun previewCurrentSkillDiff(skillName: String) {
+    _state.update { it.copy(skillDiffPreview = skillDiffMerge.previewCurrent(skillName), skillsError = null, lastError = null) }
+  }
+
+  fun applySkillDiffMerge(acceptedHunkIndexes: Set<Int>) {
+    val preview = _state.value.skillDiffPreview ?: return
+    val request = skillDiffMerge.applyMergedPreview(preview, NbgSkillMergeSelection(acceptedHunkIndexes))
+    val result = skillManage.apply(request)
+    if (!result.ok) {
+      _state.update { it.copy(skillsError = result.message, lastError = result.message) }
+      return
+    }
+    _state.update { it.copy(skillDiffPreview = skillDiffMerge.previewCurrent(preview.skillName), skillsError = null, lastError = null) }
+    loadLearnedSkillDraftQueue()
+    loadAutonomousLearningSnapshot()
+  }
+
+  fun closeSkillDiffPreview() {
+    _state.update { it.copy(skillDiffPreview = null) }
   }
 
   fun loadLearnedSkillDraftQueue() {
@@ -458,6 +517,16 @@ class HanakoChatController(
     _state.update { state ->
       state.withSkillCuratorMetadata(metadata)
     }
+  }
+
+  fun loadSkillCuratorLoopState() {
+    _state.update { it.copy(skillCuratorLoopState = skillCuratorLoopStore.load()) }
+  }
+
+  fun setSkillCuratorLoopEnabled(enabled: Boolean) {
+    val state = skillCuratorLoopStore.setEnabled(enabled)
+    if (enabled) NbgSkillCuratorLoopWorkManager.ensureScheduled(appContext)
+    _state.update { it.copy(skillCuratorLoopState = state) }
   }
 
   fun stop() {
@@ -580,6 +649,7 @@ class HanakoChatController(
 
   fun sendPrompt(text: String, displayText: String = text) {
     val prompt = text.trim()
+    if (prompt.startsWith("/") && handleLocalSlash(prompt)) return
     if (prompt.startsWith("/")) {
       learnFromUserTurn(prompt)
       sendSlash(prompt)
@@ -591,6 +661,7 @@ class HanakoChatController(
   fun sendPromptWithUrlApi(text: String, entry: NbgStoredApi, model: NbgApiModel, displayText: String = text) {
     val prompt = text.trim()
     if (prompt.isBlank()) return
+    if (prompt.startsWith("/") && handleLocalSlash(prompt)) return
     if (prompt.startsWith("/")) {
       learnFromUserTurn(prompt)
       sendSlash(prompt)
@@ -601,6 +672,7 @@ class HanakoChatController(
 
   fun sendMultiAgentPrompt(text: String, displayText: String = text) {
     val prompt = text.trim()
+    if (prompt.startsWith("/") && handleLocalSlash(prompt)) return
     if (prompt.startsWith("/")) {
       learnFromUserTurn(prompt)
       sendSlash(prompt)
@@ -679,6 +751,7 @@ class HanakoChatController(
   fun sendMultiAgentPromptWithUrlApi(text: String, entry: NbgStoredApi, model: NbgApiModel, displayText: String = text) {
     val prompt = text.trim()
     if (prompt.isBlank()) return
+    if (prompt.startsWith("/") && handleLocalSlash(prompt)) return
     if (prompt.startsWith("/")) {
       learnFromUserTurn(prompt)
       sendSlash(prompt)
@@ -690,6 +763,7 @@ class HanakoChatController(
   fun createTeamTask(text: String) {
     val prompt = text.trim()
     if (prompt.isBlank()) return
+    if (prompt.startsWith("/") && handleLocalSlash(prompt)) return
     learnFromUserTurn(prompt)
     if (prompt.startsWith("/")) {
       sendSlash(prompt)
@@ -701,6 +775,7 @@ class HanakoChatController(
   fun createTeamTaskWithUrlApi(text: String, entry: NbgStoredApi, model: NbgApiModel) {
     val prompt = text.trim()
     if (prompt.isBlank()) return
+    if (prompt.startsWith("/") && handleLocalSlash(prompt)) return
     learnFromUserTurn(prompt)
     if (prompt.startsWith("/")) {
       sendSlash(prompt)
@@ -1031,6 +1106,35 @@ class HanakoChatController(
         }
         finishLocalSendFailure()
       }
+    }
+  }
+
+  private fun handleLocalSlash(text: String): Boolean {
+    val command = text.trim()
+    val verb = command.substringBefore(' ').lowercase()
+    return when (verb) {
+      "/compress" -> {
+        learnFromUserTurn(command)
+        onEvent(HanakoChatEvent.UserMessage(command))
+        compressForkSession()
+        true
+      }
+      "/usage" -> {
+        learnFromUserTurn(command)
+        onEvent(HanakoChatEvent.UserMessage(command))
+        refreshContextInsights()
+        _state.value.sessionPath?.takeIf { it.isNotBlank() }?.let(::requestContextUsage)
+        onEvent(HanakoChatEvent.SystemMessage("当前 ${_state.value.contextInsights.usage.label}"))
+        true
+      }
+      "/insights" -> {
+        learnFromUserTurn(command)
+        onEvent(HanakoChatEvent.UserMessage(command))
+        refreshContextInsights()
+        onEvent(HanakoChatEvent.SystemMessage(nbgContextInsightsSystemMessage(_state.value.contextInsights)))
+        true
+      }
+      else -> false
     }
   }
 
@@ -1818,6 +1922,18 @@ class HanakoChatController(
       state.withSkillCuratorMetadata(saved).copy(
         skillsError = null,
         lastError = null,
+      )
+    }
+  }
+
+  fun runSkillCuratorLoopNow() {
+    val state = skillCuratorLoopRunner.runOnce(snapshot = _state.value.rawSkillsSnapshot)
+    val metadata = skillCuratorStore.load()
+    _state.update { current ->
+      current.withSkillCuratorMetadata(metadata).copy(
+        skillCuratorLoopState = state,
+        skillsError = null,
+        lastError = state.lastError.ifBlank { current.lastError },
       )
     }
   }
@@ -3681,10 +3797,12 @@ class HanakoChatController(
       return
     }
     val label = formatContextUsage(msg)
+    latestContextUsage = parseNbgContextUsageSnapshot(msg)
     _state.update {
       it.copy(
         contextUsageLabel = label,
         compressionAvailable = msg.optBoolean("compressionAvailable", false),
+        contextInsights = nbgBuildContextInsights(latestContextUsage, it.autonomousLearningSnapshot, it.sessions),
       )
     }
   }
@@ -3736,7 +3854,16 @@ class HanakoChatController(
       ).joinToString(" / ").takeIf { it.isNotBlank() }?.let { "用量 $it" }
       else -> null
     } ?: return
-    _state.update { it.copy(runtimeStatus = it.runtimeStatus.copy(usageLabel = label)) }
+    latestContextUsage = parseNbgContextUsageSnapshot(msg).copy(
+      compressionAvailable = _state.value.compressionAvailable,
+      updatedAtMs = System.currentTimeMillis(),
+    )
+    _state.update {
+      it.copy(
+        runtimeStatus = it.runtimeStatus.copy(usageLabel = label),
+        contextInsights = nbgBuildContextInsights(latestContextUsage, it.autonomousLearningSnapshot, it.sessions),
+      )
+    }
   }
 
   private fun handlePlanMode(msg: JSONObject) {
@@ -3974,3 +4101,23 @@ private fun HanakoChatState.withSkillCuratorMetadata(metadata: NbgSkillCuratorMe
     skillCuratorMetadata = metadata,
     skillsSnapshot = nbgApplySkillCuratorMetadata(rawSkillsSnapshot, metadata),
   )
+
+private fun nbgContextInsightsSystemMessage(insights: NbgContextInsights): String =
+  buildString {
+    append("Context insights：")
+    append(insights.usage.label)
+    append(" · 会话 ")
+    append(insights.sessionCount)
+    append(" · 学习项 ")
+    append(insights.learningItemCount)
+    if (insights.pendingReviewCount > 0) {
+      append(" · 待复核 ")
+      append(insights.pendingReviewCount)
+    }
+    if (insights.lastRecallQuery.isNotBlank()) {
+      append(" · Recall ")
+      append(insights.lastRecallQuery.take(40))
+    }
+    append(" · ")
+    append(insights.suggestion)
+  }
