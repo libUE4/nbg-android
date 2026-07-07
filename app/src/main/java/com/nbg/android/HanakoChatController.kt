@@ -76,6 +76,9 @@ class HanakoChatController(
   private var lastAgentModelConfig: HanakoAgentModelConfig? = null
   private var lastWsErrorMessage = ""
   private var lastWsErrorAtMs = 0L
+  private var activeLearningUserText = ""
+  private val activeLearningAssistantText = StringBuilder()
+  private var activeLearningTurnStartedAtMs = 0L
 
   private fun applyFocusState(focus: HanakoSessionFocusState) {
     _state.update {
@@ -324,6 +327,7 @@ class HanakoChatController(
   }
 
   fun createScheduledAutomation(template: NbgScheduledAutomationTemplate) {
+    NbgScheduleWorkManager.ensureScheduled(appContext)
     val automation = nbgScheduledAutomation(
       title = template.label,
       template = template,
@@ -333,6 +337,7 @@ class HanakoChatController(
   }
 
   fun setScheduledAutomationEnabled(id: String, enabled: Boolean) {
+    if (enabled) NbgScheduleWorkManager.ensureScheduled(appContext)
     _state.update { it.copy(scheduleState = scheduleStore.setEnabled(id, enabled)) }
   }
 
@@ -594,6 +599,52 @@ class HanakoChatController(
     }
   }
 
+  private fun beginLearningTurn(prompt: String) {
+    activeLearningUserText = prompt.nbgLearningTurnText(limit = 4_000)
+    activeLearningAssistantText.clear()
+    activeLearningTurnStartedAtMs = System.currentTimeMillis()
+  }
+
+  private fun appendLearningAssistantText(text: String) {
+    val clean = text.nbgLearningTurnText(limit = 4_000)
+    if (clean.isBlank()) return
+    val remaining = 4_000 - activeLearningAssistantText.length
+    if (remaining <= 0) return
+    activeLearningAssistantText.append(clean.take(remaining))
+  }
+
+  private fun finishLearningTurn() {
+    val userText = activeLearningUserText
+    val assistantText = activeLearningAssistantText.toString().nbgLearningTurnText(limit = 4_000)
+    if (userText.isBlank() && assistantText.isBlank()) return
+    val snapshot = autonomousLearningEngine.learnFromTurn(
+      NbgLearningSourceTurn(
+        userText = userText,
+        assistantText = assistantText,
+        sessionPath = _state.value.sessionPath.orEmpty(),
+        turnId = "android-turn-${activeLearningTurnStartedAtMs.takeIf { it > 0L } ?: System.currentTimeMillis()}",
+        timestampMs = activeLearningTurnStartedAtMs.takeIf { it > 0L } ?: System.currentTimeMillis(),
+      ),
+    )
+    val recalled = autonomousLearningEngine.recall(
+      query = listOf(userText, assistantText).joinToString(" ").take(400),
+      sessions = historyStore.readSummaryIndex(limit = 80),
+    )
+    clearLearningTurn()
+    _state.update {
+      it.copy(
+        autonomousLearningSnapshot = recalled.copy(auditLog = snapshot.auditLog),
+        learnedSkillDraftQueue = recalled.learnedSkillDraftQueue,
+      )
+    }
+  }
+
+  private fun clearLearningTurn() {
+    activeLearningUserText = ""
+    activeLearningAssistantText.clear()
+    activeLearningTurnStartedAtMs = 0L
+  }
+
   fun sendMultiAgentPromptWithUrlApi(text: String, entry: NbgStoredApi, model: NbgApiModel, displayText: String = text) {
     val prompt = text.trim()
     if (prompt.isBlank()) return
@@ -800,12 +851,13 @@ class HanakoChatController(
     val promptForModel = prompt.trim()
     val displayMessage = JSONObject().put("text", displayText)
     if (!displayMode.isNullOrBlank()) displayMessage.put("mode", displayMode)
+    val learningContext = buildLearningContextForPrompt(promptForModel)
     val ok = ws.send(
       JSONObject()
         .put("type", type)
         .put("text", promptForModel)
         .put("sessionPath", sessionPath)
-        .put("uiContext", androidUiContext(sessionPath))
+        .put("uiContext", androidUiContext(sessionPath, learningContext))
         .put("displayMessage", displayMessage)
         .toString(),
     )
@@ -822,11 +874,17 @@ class HanakoChatController(
   private fun finishLocalClientTurn() {
     _state.update { it.copy(streaming = false) }
     resetActiveTurnState()
-    onEvent(HanakoChatEvent.TurnEnded)
+    finishLearningTurnAndEmitEnded()
   }
 
   private fun finishLocalSendFailure() {
+    clearLearningTurn()
     finishLocalClientTurn()
+  }
+
+  private fun finishLearningTurnAndEmitEnded() {
+    finishLearningTurn()
+    onEvent(HanakoChatEvent.TurnEnded)
   }
 
   private fun sendPromptInternal(
@@ -839,7 +897,7 @@ class HanakoChatController(
     val visiblePrompt = displayText.trim().ifBlank { prompt }
     if (prompt.isEmpty()) return
     onEvent(HanakoChatEvent.UserMessage(visiblePrompt))
-    learnFromUserTurn(prompt)
+    beginLearningTurn(prompt)
     scope.launch {
       val wasStreaming = _state.value.streaming
       val feedbackAssistantId = if (wasStreaming) {
@@ -3077,7 +3135,7 @@ class HanakoChatController(
         assistantMessageId = null
         assistantHasText = false
         endThinking()
-        onEvent(HanakoChatEvent.TurnEnded)
+        finishLearningTurnAndEmitEnded()
       }
       "session_title" -> {
         val title = msg.optString("title")
@@ -3197,7 +3255,7 @@ class HanakoChatController(
         setAssistantText(id, "HanakoPro 错误：$message")
         resetActiveTurnState()
         onEvent(HanakoChatEvent.ToolInterrupted)
-        onEvent(HanakoChatEvent.TurnEnded)
+        finishLearningTurnAndEmitEnded()
       }
       "confirmation_resolved" -> {
         val confirmId = msg.optString("confirmId")
@@ -3471,7 +3529,7 @@ class HanakoChatController(
     )
   }
 
-  private fun androidUiContext(sessionPath: String): JSONObject =
+  private fun androidUiContext(sessionPath: String, learningContext: JSONObject? = null): JSONObject =
     JSONObject()
       .put("currentViewed", "android-chat")
       .put("locale", NBG_ANDROID_LANGUAGE_LOCALE)
@@ -3480,6 +3538,40 @@ class HanakoChatController(
       .put("activePreview", JSONObject.NULL)
       .put("sessionPath", sessionPath)
       .put("pinnedFiles", JSONArray())
+      .also { context ->
+        if (learningContext != null) context.put("learningContext", learningContext)
+      }
+
+  private fun buildLearningContextForPrompt(prompt: String): JSONObject? {
+    val snapshot = autonomousLearningEngine.recall(
+      query = prompt,
+      sessions = historyStore.readSummaryIndex(limit = 80),
+      limit = 8,
+    )
+    val items = snapshot.recallBundle.items.take(8)
+    if (items.isEmpty()) return null
+    _state.update {
+      it.copy(
+        autonomousLearningSnapshot = snapshot,
+        learnedSkillDraftQueue = snapshot.learnedSkillDraftQueue,
+      )
+    }
+    return JSONObject()
+      .put("version", NBG_AUTONOMOUS_LEARNING_ENGINE_VERSION)
+      .put("query", snapshot.recallBundle.query)
+      .put("items", JSONArray().also { array ->
+        items.forEach { item ->
+          array.put(
+            JSONObject()
+              .put("kind", item.kind.wireName)
+              .put("title", item.title)
+              .put("snippet", item.snippet)
+              .put("score", item.score)
+              .put("sourceRef", item.sourceRef),
+          )
+        }
+      })
+  }
 
   private fun handleStreamingStatus(msg: JSONObject) {
     val isStreaming = msg.hanakoStreamingFlag() ?: return
@@ -3490,7 +3582,7 @@ class HanakoChatController(
         finishInterruptedTurn()
       }
       resetActiveTurnState()
-      onEvent(HanakoChatEvent.TurnEnded)
+      finishLearningTurnAndEmitEnded()
     }
   }
 
@@ -3707,6 +3799,7 @@ class HanakoChatController(
   private fun setAssistantText(messageId: Long, text: String) {
     assistantMessageId = messageId
     assistantHasText = text.isNotBlank()
+    if (!text.isNbgAssistantPlaceholderText()) appendLearningAssistantText(text)
     onEvent(HanakoChatEvent.AssistantText(messageId, text))
   }
 
@@ -3727,6 +3820,7 @@ class HanakoChatController(
 
   private fun appendAssistantDelta(delta: String) {
     val id = assistantMessageId ?: beginAssistant("")
+    appendLearningAssistantText(delta)
     if (!assistantHasText) {
       assistantHasText = true
       onEvent(HanakoChatEvent.AssistantText(id, delta))
@@ -3734,6 +3828,22 @@ class HanakoChatController(
       onEvent(HanakoChatEvent.AssistantDelta(id, delta))
     }
   }
+
+  private fun String.isNbgAssistantPlaceholderText(): Boolean {
+    val clean = trim()
+    if (clean.isBlank()) return true
+    return clean in setOf(
+      "HanakoPro 正在后台预热，连接后自动发送...",
+      "正在启动 HanakoPro，首次启动可能需要半分钟...",
+      "正在思考...",
+    )
+  }
+
+  private fun String.nbgLearningTurnText(limit: Int): String =
+    nbgRedactDiagnosticText(this)
+      .replace(Regex("\\s+"), " ")
+      .trim()
+      .take(limit.coerceAtLeast(0))
 
   private fun beginThinking(): Long {
     thinkingMessageId?.let { return it }

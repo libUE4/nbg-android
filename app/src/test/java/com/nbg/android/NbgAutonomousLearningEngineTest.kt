@@ -109,6 +109,48 @@ class NbgAutonomousLearningEngineTest {
   }
 
   @Test
+  fun completedAssistantTurnCreatesReusableMemoryFromFullTrajectory() {
+    val engine = engine()
+
+    val snapshot = engine.learnFromTurn(
+      NbgLearningSourceTurn(
+        userText = "修复 Android Learning 页面刷新问题",
+        assistantText = "已实现完整轮次刷新，并且测试通过。Verification: BUILD SUCCESSFUL.",
+        sessionPath = "/root/private/session.jsonl",
+        turnId = "turn-complete",
+      ),
+      nowMs = 350L,
+    )
+
+    assertEquals(1, snapshot.auditLog.events.size)
+    assertEquals(NbgLearningCandidateKind.Memory, snapshot.auditLog.events.single().candidate.kind)
+    assertEquals(NbgLearningEventStatus.AutoApplied, snapshot.auditLog.events.single().status)
+    assertEquals(1, snapshot.localMemory.enabledEntries.size)
+    assertTrue(snapshot.localMemory.enabledEntries.single().content.contains("User request"))
+    assertTrue(snapshot.localMemory.enabledEntries.single().tags.contains("turn-summary"))
+  }
+
+  @Test
+  fun scheduleSuggestionIsAuditedWithoutRunningTools() {
+    val engine = engine()
+
+    val snapshot = engine.learnFromTurn(
+      NbgLearningSourceTurn(
+        userText = "以后每天生成学习审计",
+        assistantText = "可以创建 daily scheduled automation，只读取学习审计，不执行命令。",
+        turnId = "turn-schedule",
+      ),
+      nowMs = 360L,
+    )
+
+    assertEquals(1, snapshot.auditLog.events.size)
+    assertEquals(NbgLearningCandidateKind.ScheduleSuggestion, snapshot.auditLog.events.single().candidate.kind)
+    assertFalse(snapshot.auditLog.events.single().review.blocked)
+    assertEquals(0, snapshot.localMemory.entries.size)
+    assertEquals(0, snapshot.learnedSkillDraftQueue.visibleEntries.size)
+  }
+
+  @Test
   fun learningGraphLinksRelatedMemoryProfileAndSkillNodes() {
     val memory = nbgBuildLocalLearningMemory(
       listOf(

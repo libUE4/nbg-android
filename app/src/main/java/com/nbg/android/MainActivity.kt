@@ -108,6 +108,7 @@ class MainActivity : ComponentActivity() {
     val initialPageName = initialPageNameForIntent(intent)
     HanakoBackgroundWarmup.start(this)
     HanakoForegroundServiceController.start(this)
+    NbgScheduleWorkManager.ensureScheduled(this)
     setContent {
       NbgAndroidApp(
         initialPageName = initialPageName,

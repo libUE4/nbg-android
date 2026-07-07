@@ -103,6 +103,7 @@ dependencies {
     exclude(group = "com.google.android.material")
   }
   implementation(libs.coroutines.android)
+  implementation(libs.androidx.work.runtime.ktx)
   implementation(libs.okhttp)
   implementation(libs.org.json)
   implementation(libs.termux.terminal.view)

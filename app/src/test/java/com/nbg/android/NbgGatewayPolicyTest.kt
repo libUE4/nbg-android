@@ -28,4 +28,5 @@ class NbgGatewayPolicyTest {
     assertFalse(external.canExecuteTools)
     assertEquals(NbgGatewayInboxStatus.Received, external.status)
   }
+
 }

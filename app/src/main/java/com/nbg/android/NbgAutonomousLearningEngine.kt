@@ -240,15 +240,76 @@ internal fun nbgLearningCandidatesFromTurn(
   nowMs: Long = System.currentTimeMillis(),
 ): List<NbgLearningCandidate> {
   val text = turn.userText.trim()
-  if (text.isBlank()) return emptyList()
+  val assistantText = turn.assistantText.trim()
+  if (text.isBlank() && assistantText.isBlank()) return emptyList()
   val sourceSessionPath = turn.sessionPath.trim()
   val sourceTurnId = turn.turnId.trim()
-  val baseId = listOf(text, sourceSessionPath, sourceTurnId, nowMs.toString()).joinToString("\u001f").sha256Hex().take(16)
+  val baseId = listOf(text, sourceSessionPath, sourceTurnId).joinToString("\u001f").sha256Hex().take(16)
+  val assistantBaseId = listOf(assistantText, sourceSessionPath, sourceTurnId).joinToString("\u001f").sha256Hex().take(16)
   val candidates = mutableListOf<NbgLearningCandidate>()
   nbgLearningMemoryCandidate(text, baseId, sourceSessionPath, sourceTurnId, nowMs)?.let(candidates::add)
   nbgLearningProfileCandidate(text, baseId, sourceSessionPath, sourceTurnId, nowMs)?.let(candidates::add)
   nbgLearningSkillCandidate(text, baseId, sourceSessionPath, sourceTurnId, nowMs)?.let(candidates::add)
+  nbgLearningMemoryCandidate(assistantText, assistantBaseId, sourceSessionPath, sourceTurnId, nowMs)?.let(candidates::add)
+  nbgLearningProfileCandidate(assistantText, assistantBaseId, sourceSessionPath, sourceTurnId, nowMs)?.let(candidates::add)
+  nbgLearningSkillCandidate(assistantText, assistantBaseId, sourceSessionPath, sourceTurnId, nowMs)?.let(candidates::add)
+  nbgCompletedTurnMemoryCandidate(text, assistantText, baseId, sourceSessionPath, sourceTurnId, nowMs)?.let(candidates::add)
+  nbgLearningScheduleSuggestionCandidate(text, assistantText, baseId, sourceSessionPath, sourceTurnId, nowMs)?.let(candidates::add)
   return candidates
+}
+
+private fun nbgCompletedTurnMemoryCandidate(
+  userText: String,
+  assistantText: String,
+  baseId: String,
+  sourceSessionPath: String,
+  sourceTurnId: String,
+  nowMs: Long,
+): NbgLearningCandidate? {
+  if (userText.length < 8 || assistantText.length < 20) return null
+  if (!nbgAssistantTurnLooksCompleted(assistantText)) return null
+  val summary = buildString {
+    append("User request: ")
+    append(userText.nbgLearningCompact(limit = 420))
+    append("\nResult: ")
+    append(assistantText.nbgLearningCompact(limit = 1_200))
+  }.nbgLearningCompact(limit = NBG_LEARNING_MAX_CONTENT_CHARS)
+  if (summary.isBlank() || nbgMemorySensitiveFindings(summary).isNotEmpty()) return null
+  return NbgLearningCandidate(
+    id = "turn-memory-$baseId",
+    kind = NbgLearningCandidateKind.Memory,
+    title = nbgLearningTitle(userText, fallback = "完成任务经验"),
+    content = summary,
+    sourceSessionPath = sourceSessionPath,
+    sourceTurnId = sourceTurnId,
+    permissionTier = NbgPermissionRiskTier.Low,
+    tags = listOf("auto", "memory", "turn-summary"),
+    createdAtMs = nowMs,
+  )
+}
+
+private fun nbgLearningScheduleSuggestionCandidate(
+  userText: String,
+  assistantText: String,
+  baseId: String,
+  sourceSessionPath: String,
+  sourceTurnId: String,
+  nowMs: Long,
+): NbgLearningCandidate? {
+  val combined = listOf(userText, assistantText).joinToString("\n").nbgLearningCompact(limit = 1_200)
+  if (!nbgLooksLikeScheduleSuggestion(combined)) return null
+  if (nbgMemorySensitiveFindings(combined).isNotEmpty()) return null
+  return NbgLearningCandidate(
+    id = "schedule-$baseId",
+    kind = NbgLearningCandidateKind.ScheduleSuggestion,
+    title = nbgLearningTitle(userText.ifBlank { assistantText }, fallback = "定时自动化建议"),
+    content = combined,
+    sourceSessionPath = sourceSessionPath,
+    sourceTurnId = sourceTurnId,
+    permissionTier = nbgPermissionRiskForAction("schedule suggestion", userText, assistantText).tier,
+    tags = listOf("auto", "schedule"),
+    createdAtMs = nowMs,
+  )
 }
 
 private fun nbgLearningMemoryCandidate(
@@ -490,6 +551,18 @@ private fun nbgLearningSkillName(text: String): String {
   return ascii.ifBlank { "learned-android-workflow" }
 }
 
+private fun nbgAssistantTurnLooksCompleted(text: String): Boolean {
+  val lower = text.lowercase()
+  return NBG_TURN_COMPLETION_MARKERS.any { lower.contains(it) } &&
+    !NBG_TURN_NON_COMPLETION_MARKERS.any { lower.contains(it) }
+}
+
+private fun nbgLooksLikeScheduleSuggestion(text: String): Boolean {
+  val lower = text.lowercase()
+  return NBG_SCHEDULE_LEARNING_MARKERS.any { lower.contains(it) } &&
+    NBG_SCHEDULE_CADENCE_MARKERS.any { lower.contains(it) }
+}
+
 internal fun nbgBuildLearningGraph(
   memory: NbgLocalLearningMemory,
   profile: NbgUserProfile,
@@ -704,4 +777,54 @@ private val NBG_SKILL_LEARNING_MARKERS = listOf(
   "保存为技能",
   "learn this workflow",
   "save as skill",
+)
+
+private val NBG_TURN_COMPLETION_MARKERS = listOf(
+  "已完成",
+  "完成了",
+  "已实现",
+  "实现了",
+  "已修复",
+  "修复了",
+  "已验证",
+  "验证通过",
+  "测试通过",
+  "build successful",
+  "tests passed",
+  "implemented",
+  "fixed",
+  "verified",
+  "done",
+)
+
+private val NBG_TURN_NON_COMPLETION_MARKERS = listOf(
+  "未完成",
+  "还没完成",
+  "没有完成",
+  "测试失败",
+  "build failed",
+  "not completed",
+  "failed",
+)
+
+private val NBG_SCHEDULE_LEARNING_MARKERS = listOf(
+  "定时",
+  "自动化",
+  "每天",
+  "每周",
+  "schedule",
+  "cron",
+  "automation",
+)
+
+private val NBG_SCHEDULE_CADENCE_MARKERS = listOf(
+  "daily",
+  "weekly",
+  "hourly",
+  "每天",
+  "每日",
+  "每周",
+  "每小时",
+  "nightly",
+  "weekly",
 )
