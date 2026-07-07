@@ -597,6 +597,23 @@ class HanakoChatController(
     _state.update { it.copy(skillCuratorSuggestionQueue = queue, skillsError = null, lastError = null) }
   }
 
+  fun previewSkillCuratorSuggestionPatch(id: String) {
+    val entry = skillCuratorSuggestionQueueStore.load().entries.firstOrNull { it.id == id.trim() } ?: return
+    val request = entry.toSkillManageRequestOrNull()
+    if (request == null) {
+      _state.update { it.copy(skillsError = "这条 Curator 建议没有可预览的 patch draft。", lastError = null) }
+      return
+    }
+    _state.update {
+      it.copy(
+        skillDiffPreview = skillDiffMerge.preview(request),
+        skillDiffFiles = skillDiffMerge.listFiles(request.name),
+        skillsError = null,
+        lastError = null,
+      )
+    }
+  }
+
   fun approveSkillCuratorSuggestion(id: String) {
     val entry = skillCuratorSuggestionQueueStore.load().entries.firstOrNull { it.id == id.trim() } ?: return
     if (entry.action == "archive") {
@@ -621,6 +638,12 @@ class HanakoChatController(
           lastError = null,
         )
       }
+      return
+    }
+    if (entry.hasPatchDraft) {
+      previewSkillCuratorSuggestionPatch(id)
+      val queue = skillCuratorSuggestionQueueStore.updateStatus(id, NbgSkillCuratorSuggestionStatus.Accepted, "patch draft previewed")
+      _state.update { it.copy(skillCuratorSuggestionQueue = queue) }
       return
     }
     val queue = skillCuratorSuggestionQueueStore.updateStatus(id, NbgSkillCuratorSuggestionStatus.Accepted, "advisory suggestion accepted")

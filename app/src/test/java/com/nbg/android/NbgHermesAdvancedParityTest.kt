@@ -174,7 +174,7 @@ class NbgHermesAdvancedParityTest {
     val suggestions = nbgParseSkillCuratorLlmSuggestions(
       """
       review:
-      {"suggestions":[{"skillName":"android-build","action":"merge","reason":"duplicate build notes","patchHint":"merge Gradle steps"},{"name":"old","action":"delete"}]}
+      {"suggestions":[{"skillName":"android-build","action":"merge","reason":"duplicate build notes","patchHint":"merge Gradle steps","patchDraft":{"filePath":"SKILL.md","oldString":"old step","newString":"new step"}},{"name":"old","action":"delete"}]}
       """.trimIndent(),
     )
 
@@ -182,6 +182,10 @@ class NbgHermesAdvancedParityTest {
     assertEquals("android-build", suggestions.first().skillName)
     assertEquals("merge", suggestions.first().action)
     assertTrue(suggestions.first().patchHint.contains("Gradle"))
+    assertTrue(suggestions.first().hasPatchDraft)
+    assertEquals("SKILL.md", suggestions.first().filePath)
+    assertEquals("old step", suggestions.first().oldString)
+    assertEquals("new step", suggestions.first().newString)
   }
 
   @Test
@@ -206,6 +210,8 @@ class NbgHermesAdvancedParityTest {
                 .put("skillName", "terminal")
                 .put("action", "rewrite")
                 .put("reason", "needs shorter instructions")
+                .put("filePath", "references/notes.md")
+                .put("proposedContent", "shorter instructions")
                 .put("status", "accepted")
                 .put("createdAtMs", 10),
             ),
@@ -216,7 +222,13 @@ class NbgHermesAdvancedParityTest {
     assertEquals(2, queue.entries.size)
     assertEquals(1, queue.pendingCount)
     assertEquals("android-build", queue.pendingEntries.first().skillName)
-    assertEquals(NbgSkillCuratorSuggestionStatus.Accepted, queue.entries.first { it.id == "s2" }.status)
+    val accepted = queue.entries.first { it.id == "s2" }
+    val request = accepted.toSkillManageRequestOrNull()
+    assertEquals(NbgSkillCuratorSuggestionStatus.Accepted, accepted.status)
+    assertTrue(accepted.hasPatchDraft)
+    assertEquals(NbgSkillManageAction.WriteFile, request?.action)
+    assertEquals("references/notes.md", request?.filePath)
+    assertEquals("shorter instructions", request?.fileContent)
   }
 
   @Test

@@ -24,7 +24,7 @@ Implemented in the current Android architecture:
 - Skill learning safety: `/learn` and natural-language learning produce reviewed Skill draft queue entries; generated Skills are policy-reviewed and record local rollback metadata when auto-applied.
 - SkillManage v3: Android-local `NbgSkillManage` supports create/edit/patch/write_file/remove_file/delete for learned Skill artifacts inside app-private `learned-skills`, with rollback backups, path containment, and multi-file `NbgSkillDiffMerge` hunk previews / selective merge / rollback comparison UI on the Skills page.
 - Skill self-improvement foundation: ended tool results can produce `SkillImprovement` candidates from task evidence and terminal failure/success signals; Low/Medium candidates can auto-apply into local Skill artifacts with previous-artifact hash/backup metadata, while High/Dangerous remain review-gated or blocked. Applied artifacts are now reviewable through the diff/merge card.
-- Skill Curator loop v4: `NbgSkillCuratorLoopWorker` can run a user-enabled WorkManager background curator pass and an opt-in read-only LLM curator pass through the configured URL API model. LLM results are persisted into `NbgSkillCuratorSuggestionQueue` for explicit accept/ignore handling, preserving the default no-cloud/no-auto-delete boundary.
+- Skill Curator loop v5: `NbgSkillCuratorLoopWorker` can run a user-enabled WorkManager background curator pass and an opt-in read-only LLM curator pass through the configured URL API model. LLM results are persisted into `NbgSkillCuratorSuggestionQueue` for explicit accept/ignore handling, and merge/rewrite suggestions can carry a patch draft that opens in the existing Skill diff/merge review UI.
 - Model Provider Profiles v2: `NbgModelProviderProfile` registers OpenRouter/OpenAI/Gemini/Qwen/Kimi/Nous/Ollama style provider metadata and routes model fetch, verification, read-only generation, auth header, thinking/extra-body, and chat/model endpoints through provider profiles.
 - Context maintenance v3: Android tracks `NbgContextInsights`, synchronizes context/token usage events, estimates token/cost totals by provider/model/session, exposes slash commands `/compress`, `/usage`, `/insights`, `/search`, `/cost`, `/memory`, `/provider`, `/model`, `/skills`, `/tools`, `/agents`, and `/curator`, and can remind or auto-compress when context usage crosses the configured threshold.
 - Learning Journey v1: Learning graph nodes can be edited/deleted from Android-local Memory/Profile/Soul/Skill draft/installed learned Skill stores.
@@ -47,7 +47,7 @@ Implemented in the current Android architecture:
 | Skills from experience | Learned Skill draft queue, evidence/hash/path/risk review, Low/Medium auto-apply, rollback metadata, local SkillManage operations, multi-file diff/merge/rollback UI | Implemented v3 |
 | Skills improve during use | Tool-result-driven SkillImprovement candidates with Low/Medium auto-apply, rollback metadata, local patch/write-file support, multi-file hunk diff review | Implemented v3 |
 | Learning graph / journey | Memory/Profile/Soul/Skill graph, editable/deletable Journey nodes, installed Skill related_skills links | Implemented v1 |
-| Past session search | Local redacted `session-summary-index.json` + cached-message SQLite FTS5 index for sessions, Memory, Skills, and Skill drafts + remote merge fallback | Implemented v3 |
+| Past session search | Local redacted `session-summary-index.json` + cached-message SQLite FTS5 index for sessions, Memory, Skills, and Skill drafts + filterable Learning-page results + remote merge fallback | Implemented v4 |
 | Cross-session recall | Local Recall ranks Memory/Profile/Soul/Skill/session hits | Implemented v1 |
 | Cron scheduling | WorkManager-backed local Scheduled Automations, run audit, and local-only read report runner | Implemented v1 |
 | Messaging gateway | Gateway Inbox model, policy gate, Android share-sheet ingestion, and notification-reply ingestion | Implemented v1 |
@@ -77,7 +77,7 @@ Implemented in the current Android architecture:
 The current increment establishes stable local models, policy gates, persistence, tests, and Learning/Skills/URL API page visibility. Deeper follow-up work remains:
 
 - Provider-specific external Memory account UX can still be refined after real-world Honcho/mem0/supermemory endpoint testing. The adapter boundary and encrypted secret flow are implemented, but no third-party account is enabled by default.
-- LLM curator suggestions are now persisted into an explicit accept/ignore queue. Accepting archive suggestions applies only local curator archive metadata; merge/rewrite suggestions remain advisory until a user applies a concrete Skill diff.
+- LLM curator suggestions are now persisted into an explicit accept/ignore queue. Accepting archive suggestions applies only local curator archive metadata; merge/rewrite suggestions can preview a concrete patch draft, but the user still applies changes through the Skill diff/merge UI.
 - Deeper visual diff ergonomics such as side-by-side file panes and long-running multi-file merge sessions remain future UI polish. Android now has multi-file hunk preview, selective hunk merge, and rollback comparison for local learned Skill artifacts.
 
 ## Verification

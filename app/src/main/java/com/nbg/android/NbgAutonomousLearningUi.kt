@@ -92,6 +92,7 @@ internal fun NbgAutonomousLearningScreen(
   var providerUserId by remember { mutableStateOf("") }
   var providerAgentId by remember { mutableStateOf("") }
   var sessionSearchQuery by remember { mutableStateOf("") }
+  var sessionSearchFilter by remember { mutableStateOf("all") }
   NbgShellSubPage(
     title = "Learning",
     subtitle = "Hermes 风格自主学习 · 本地审计",
@@ -115,7 +116,9 @@ internal fun NbgAutonomousLearningScreen(
           usageCostState = usageCostState,
           sessionFtsHits = sessionFtsHits,
           sessionSearchQuery = sessionSearchQuery,
+          sessionSearchFilter = sessionSearchFilter,
           onSessionSearchQueryChange = { sessionSearchQuery = it },
+          onSessionSearchFilterChange = { sessionSearchFilter = it },
           onRefresh = onRefreshContextInsights,
           onCompress = onCompressContext,
           onSetCompressionMode = onSetContextCompressionMode,
@@ -335,7 +338,9 @@ private fun NbgContextInsightsCard(
   usageCostState: NbgUsageCostState,
   sessionFtsHits: List<NbgSessionFtsHit>,
   sessionSearchQuery: String,
+  sessionSearchFilter: String,
   onSessionSearchQueryChange: (String) -> Unit,
+  onSessionSearchFilterChange: (String) -> Unit,
   onRefresh: () -> Unit,
   onCompress: () -> Unit,
   onSetCompressionMode: (NbgContextCompressionMode) -> Unit,
@@ -432,7 +437,30 @@ private fun NbgContextInsightsCard(
         onClick = onSearchLocalSessions,
       )
     }
-    sessionFtsHits.take(3).forEach { hit ->
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+      listOf(
+        "all" to "全部",
+        "session" to "会话",
+        "memory" to "Memory",
+        "skill" to "Skill",
+      ).forEach { (key, label) ->
+        NbgInlineActionButton(
+          label = label,
+          icon = Icons.Filled.History,
+          primary = sessionSearchFilter == key,
+          onClick = { onSessionSearchFilterChange(key) },
+        )
+      }
+    }
+    val visibleFtsHits = sessionFtsHits.filter { hit ->
+      when (sessionSearchFilter) {
+        "session" -> hit.matchType.contains("summary") || hit.matchType.contains("message")
+        "memory" -> hit.matchType.contains("memory")
+        "skill" -> hit.matchType.contains("skill")
+        else -> true
+      }
+    }
+    visibleFtsHits.take(3).forEach { hit ->
       Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),

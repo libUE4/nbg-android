@@ -20,12 +20,19 @@ data class NbgSkillCuratorSuggestionEntry(
   val action: String,
   val reason: String,
   val patchHint: String = "",
+  val filePath: String = "",
+  val oldString: String = "",
+  val newString: String = "",
+  val proposedContent: String = "",
   val status: NbgSkillCuratorSuggestionStatus = NbgSkillCuratorSuggestionStatus.Pending,
   val source: String = "llm_curator",
   val createdAtMs: Long = 0L,
   val updatedAtMs: Long = 0L,
   val statusMessage: String = "",
-)
+) {
+  val hasPatchDraft: Boolean
+    get() = (oldString.isNotBlank() && newString.isNotBlank()) || proposedContent.isNotBlank()
+}
 
 data class NbgSkillCuratorSuggestionQueue(
   val entries: List<NbgSkillCuratorSuggestionEntry> = emptyList(),
@@ -107,6 +114,10 @@ internal fun parseNbgSkillCuratorSuggestionQueue(raw: String?): NbgSkillCuratorS
               action = action,
               reason = item.cleanString("reason").orEmpty(),
               patchHint = item.cleanString("patchHint").orEmpty(),
+              filePath = item.cleanString("filePath").orEmpty(),
+              oldString = item.cleanString("oldString").orEmpty(),
+              newString = item.cleanString("newString").orEmpty(),
+              proposedContent = item.cleanString("proposedContent").orEmpty(),
               status = nbgSkillCuratorSuggestionStatus(item.cleanString("status").orEmpty()),
               source = item.cleanString("source").orEmpty(),
               createdAtMs = item.optLong("createdAtMs", 0L),
@@ -133,12 +144,16 @@ private fun NbgSkillCuratorSuggestionEntry.normalized(): NbgSkillCuratorSuggesti
   val cleanAction = action.trim().lowercase().take(40)
   return copy(
     id = id.trim().ifBlank {
-      listOf(cleanSkillName, cleanAction, reason, patchHint).joinToString("\u001f").sha256Hex().take(24)
+      listOf(cleanSkillName, cleanAction, reason, patchHint, filePath, oldString, newString, proposedContent).joinToString("\u001f").sha256Hex().take(24)
     },
     skillName = cleanSkillName,
     action = cleanAction,
     reason = reason.trim().take(500),
     patchHint = patchHint.trim().take(1_000),
+    filePath = filePath.trim().replace('\\', '/').trimStart('/').take(240),
+    oldString = oldString.trim().take(4_000),
+    newString = newString.trim().take(4_000),
+    proposedContent = proposedContent.trim().take(8_000),
     source = source.trim().ifBlank { "llm_curator" }.take(80),
     createdAtMs = createdAtMs.coerceAtLeast(0L),
     updatedAtMs = updatedAtMs.coerceAtLeast(0L),
@@ -148,11 +163,15 @@ private fun NbgSkillCuratorSuggestionEntry.normalized(): NbgSkillCuratorSuggesti
 
 private fun NbgSkillCuratorLlmSuggestion.toQueueEntry(nowMs: Long): NbgSkillCuratorSuggestionEntry =
   NbgSkillCuratorSuggestionEntry(
-    id = listOf(skillName, action, reason, patchHint).joinToString("\u001f").sha256Hex().take(24),
+    id = listOf(skillName, action, reason, patchHint, filePath, oldString, newString, proposedContent).joinToString("\u001f").sha256Hex().take(24),
     skillName = skillName,
     action = action,
     reason = reason,
     patchHint = patchHint,
+    filePath = filePath,
+    oldString = oldString,
+    newString = newString,
+    proposedContent = proposedContent,
     createdAtMs = nowMs.coerceAtLeast(0L),
     updatedAtMs = nowMs.coerceAtLeast(0L),
   ).normalized()
@@ -174,8 +193,40 @@ private fun NbgSkillCuratorSuggestionEntry.toJson(): JSONObject =
     .put("action", action)
     .put("reason", reason)
     .put("patchHint", patchHint)
+    .put("filePath", filePath)
+    .put("oldString", oldString)
+    .put("newString", newString)
+    .put("proposedContent", proposedContent)
     .put("status", status.wireName)
     .put("source", source)
     .put("createdAtMs", createdAtMs)
     .put("updatedAtMs", updatedAtMs)
     .put("statusMessage", statusMessage)
+
+internal fun NbgSkillCuratorSuggestionEntry.toSkillManageRequestOrNull(): NbgSkillManageRequest? {
+  if (!hasPatchDraft || skillName.isBlank()) return null
+  val path = filePath.ifBlank { "SKILL.md" }
+  return when {
+    oldString.isNotBlank() && newString.isNotBlank() -> NbgSkillManageRequest(
+      action = NbgSkillManageAction.Patch,
+      name = skillName,
+      filePath = path,
+      oldString = oldString,
+      newString = newString,
+      replaceAll = false,
+    )
+    proposedContent.isNotBlank() && path == "SKILL.md" -> NbgSkillManageRequest(
+      action = NbgSkillManageAction.Edit,
+      name = skillName,
+      filePath = path,
+      content = proposedContent,
+    )
+    proposedContent.isNotBlank() -> NbgSkillManageRequest(
+      action = NbgSkillManageAction.WriteFile,
+      name = skillName,
+      filePath = path,
+      fileContent = proposedContent,
+    )
+    else -> null
+  }
+}

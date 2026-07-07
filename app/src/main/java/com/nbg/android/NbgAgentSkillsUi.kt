@@ -87,6 +87,7 @@ internal fun NbgSkillsScreen(
   onRunCuratorLoopNow: () -> Unit = {},
   onApproveCuratorSuggestion: (String) -> Unit = {},
   onIgnoreCuratorSuggestion: (String) -> Unit = {},
+  onPreviewCuratorSuggestionPatch: (String) -> Unit = {},
   onPreviewCurrentSkillDiff: (String, String) -> Unit = { _, _ -> },
   onApplySkillDiffMerge: (Set<Int>) -> Unit = {},
   onCloseSkillDiffPreview: () -> Unit = {},
@@ -143,6 +144,7 @@ internal fun NbgSkillsScreen(
           onRunLoopNow = onRunCuratorLoopNow,
           onApproveSuggestion = onApproveCuratorSuggestion,
           onIgnoreSuggestion = onIgnoreCuratorSuggestion,
+          onPreviewSuggestionPatch = onPreviewCuratorSuggestionPatch,
         )
       }
       item {
@@ -737,6 +739,7 @@ private fun NbgSkillCuratorCard(
   onRunLoopNow: () -> Unit,
   onApproveSuggestion: (String) -> Unit,
   onIgnoreSuggestion: (String) -> Unit,
+  onPreviewSuggestionPatch: (String) -> Unit,
 ) {
   Surface(
     modifier = Modifier.fillMaxWidth(),
@@ -820,6 +823,7 @@ private fun NbgSkillCuratorCard(
           busy = busy,
           onApprove = { onApproveSuggestion(suggestion.id) },
           onIgnore = { onIgnoreSuggestion(suggestion.id) },
+          onPreviewPatch = { onPreviewSuggestionPatch(suggestion.id) },
         )
       }
       if (summary.mostUsedSkillName.isNotBlank()) {
@@ -859,6 +863,7 @@ private fun NbgSkillCuratorSuggestionRow(
   busy: Boolean,
   onApprove: () -> Unit,
   onIgnore: () -> Unit,
+  onPreviewPatch: () -> Unit,
 ) {
   Surface(
     modifier = Modifier.fillMaxWidth(),
@@ -873,7 +878,7 @@ private fun NbgSkillCuratorSuggestionRow(
       Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
           Text(
-            text = "${suggestion.skillName} · ${suggestion.action}",
+            text = "${suggestion.skillName} · ${suggestion.action}${if (suggestion.hasPatchDraft) " · patch" else ""}",
             color = NbgAgentColors.TextStrong,
             fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
@@ -887,6 +892,14 @@ private fun NbgSkillCuratorSuggestionRow(
             lineHeight = 14.sp,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
+          )
+        }
+        if (suggestion.hasPatchDraft) {
+          NbgInlineActionButton(
+            label = "预览",
+            icon = Icons.Filled.Visibility,
+            enabled = !busy,
+            onClick = onPreviewPatch,
           )
         }
         NbgInlineActionButton(

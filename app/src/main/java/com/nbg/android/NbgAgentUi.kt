@@ -1516,6 +1516,7 @@ fun NbgAndroidShell(
         onRunCuratorLoopNow = { hanako.runSkillCuratorLoopNow() },
         onApproveCuratorSuggestion = { hanako.approveSkillCuratorSuggestion(it) },
         onIgnoreCuratorSuggestion = { hanako.ignoreSkillCuratorSuggestion(it) },
+        onPreviewCuratorSuggestionPatch = { hanako.previewSkillCuratorSuggestionPatch(it) },
         onPreviewCurrentSkillDiff = { skillName, filePath -> hanako.previewCurrentSkillDiff(skillName, filePath) },
         onApplySkillDiffMerge = { hanako.applySkillDiffMerge(it) },
         onCloseSkillDiffPreview = { hanako.closeSkillDiffPreview() },

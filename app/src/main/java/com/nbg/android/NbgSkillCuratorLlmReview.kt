@@ -8,7 +8,14 @@ data class NbgSkillCuratorLlmSuggestion(
   val action: String,
   val reason: String,
   val patchHint: String = "",
-)
+  val filePath: String = "",
+  val oldString: String = "",
+  val newString: String = "",
+  val proposedContent: String = "",
+) {
+  val hasPatchDraft: Boolean
+    get() = (oldString.isNotBlank() && newString.isNotBlank()) || proposedContent.isNotBlank()
+}
 
 data class NbgSkillCuratorLlmReviewResult(
   val ok: Boolean,
@@ -82,11 +89,12 @@ internal fun nbgBuildSkillCuratorLlmPrompt(
   return """
     Review these Android learned Skills.
     Return JSON:
-    {"suggestions":[{"skillName":"...","action":"keep|merge|rewrite|archive","reason":"...","patchHint":"optional"}]}
+    {"suggestions":[{"skillName":"...","action":"keep|merge|rewrite|archive","reason":"...","patchHint":"optional","filePath":"SKILL.md","oldString":"optional exact text","newString":"optional replacement","proposedContent":"optional full file draft"}]}
     Rules:
     - archive only unused, disabled, redundant learned Skills.
     - merge only when two skills clearly overlap.
-    - rewrite only as a suggestion; do not include full files.
+    - for merge/rewrite, include either oldString/newString or proposedContent only when you can make a small reviewable patch draft.
+    - proposedContent must target a single file, preferably SKILL.md or references/*.md, and should stay under 4000 characters.
 
     $payload
   """.trimIndent()
@@ -105,12 +113,17 @@ internal fun nbgParseSkillCuratorLlmSuggestions(raw: String): List<NbgSkillCurat
         val skillName = item.cleanString("skillName") ?: item.cleanString("name") ?: continue
         val action = item.cleanString("action").orEmpty().lowercase()
         if (action !in setOf("keep", "merge", "rewrite", "archive")) continue
+        val patch = item.optJSONObject("patchDraft") ?: item.optJSONObject("patch")
         add(
           NbgSkillCuratorLlmSuggestion(
             skillName = skillName.take(160),
             action = action,
             reason = item.cleanString("reason").orEmpty().take(500),
             patchHint = item.cleanString("patchHint").orEmpty().take(1_000),
+            filePath = (item.cleanString("filePath") ?: patch?.cleanString("filePath")).orEmpty().take(240),
+            oldString = (item.cleanString("oldString") ?: patch?.cleanString("oldString")).orEmpty().take(4_000),
+            newString = (item.cleanString("newString") ?: patch?.cleanString("newString")).orEmpty().take(4_000),
+            proposedContent = (item.cleanString("proposedContent") ?: patch?.cleanString("proposedContent")).orEmpty().take(8_000),
           ),
         )
       }
