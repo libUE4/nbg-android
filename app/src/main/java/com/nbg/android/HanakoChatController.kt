@@ -54,12 +54,15 @@ class HanakoChatController(
   private val skillCuratorStore = NbgSkillCuratorStore(appContext)
   private val skillCuratorLoopStore = NbgSkillCuratorLoopStore(appContext)
   private val skillCuratorLoopRunner = NbgSkillCuratorLoopRunner(appContext)
+  private val skillCuratorLlmLoop = NbgSkillCuratorAndroidLlmLoop(appContext)
   private val autonomousLearningEngine = NbgAutonomousLearningEngine(appContext)
   private val memoryProviderManager = NbgMemoryProviderManager(appContext)
   private val externalMemoryProviderStore = NbgExternalMemoryProviderStore(appContext)
   private val journeyMutations = NbgLearningJourneyMutations(appContext)
   private val skillManage = NbgSkillManage(appContext)
   private val skillDiffMerge = NbgSkillDiffMerge(appContext)
+  private val contextCompressionStrategyStore = NbgContextCompressionStrategyStore(appContext)
+  private val usageCostStore = NbgUsageCostStore(appContext)
   private val scheduleStore = NbgScheduleStore(appContext)
   private val gatewayInboxStore = NbgGatewayInboxStore(appContext)
   private var latestContextUsage = NbgContextUsageSnapshot()
@@ -272,6 +275,8 @@ class HanakoChatController(
     loadSkillCuratorLoopState()
     loadAutonomousLearningSnapshot()
     loadExternalMemoryProviderState()
+    loadContextCompressionStrategy()
+    loadUsageCostState()
     loadScheduleState()
     loadGatewayInboxState()
     refreshContextInsights()
@@ -356,6 +361,24 @@ class HanakoChatController(
     _state.update {
       it.copy(contextInsights = nbgBuildContextInsights(latestContextUsage, it.autonomousLearningSnapshot, it.sessions))
     }
+  }
+
+  fun loadContextCompressionStrategy() {
+    _state.update { it.copy(contextCompressionStrategy = contextCompressionStrategyStore.load()) }
+  }
+
+  fun setContextCompressionMode(mode: NbgContextCompressionMode) {
+    _state.update { it.copy(contextCompressionStrategy = contextCompressionStrategyStore.setMode(mode)) }
+  }
+
+  fun loadUsageCostState() {
+    _state.update { it.copy(usageCostState = usageCostStore.load()) }
+  }
+
+  fun searchLocalSessionsFts(query: String) {
+    val entries = historyStore.readSummaryIndex(limit = 300)
+    val histories = entries.take(80).map { entry -> entry to historyStore.readCachedHistory(entry.sessionPath) }
+    _state.update { it.copy(sessionFtsHits = nbgSearchSessionFts(entries, histories, query, limit = 20)) }
   }
 
   fun loadScheduleState() {
@@ -476,8 +499,15 @@ class HanakoChatController(
     _state.update { it.copy(skillDiffPreview = skillDiffMerge.preview(request), skillsError = null, lastError = null) }
   }
 
-  fun previewCurrentSkillDiff(skillName: String) {
-    _state.update { it.copy(skillDiffPreview = skillDiffMerge.previewCurrent(skillName), skillsError = null, lastError = null) }
+  fun previewCurrentSkillDiff(skillName: String, filePath: String = "SKILL.md") {
+    _state.update {
+      it.copy(
+        skillDiffPreview = skillDiffMerge.previewCurrent(skillName, filePath),
+        skillDiffFiles = skillDiffMerge.listFiles(skillName),
+        skillsError = null,
+        lastError = null,
+      )
+    }
   }
 
   fun applySkillDiffMerge(acceptedHunkIndexes: Set<Int>) {
@@ -488,13 +518,20 @@ class HanakoChatController(
       _state.update { it.copy(skillsError = result.message, lastError = result.message) }
       return
     }
-    _state.update { it.copy(skillDiffPreview = skillDiffMerge.previewCurrent(preview.skillName), skillsError = null, lastError = null) }
+    _state.update {
+      it.copy(
+        skillDiffPreview = skillDiffMerge.previewCurrent(preview.skillName, preview.relativePath),
+        skillDiffFiles = skillDiffMerge.listFiles(preview.skillName),
+        skillsError = null,
+        lastError = null,
+      )
+    }
     loadLearnedSkillDraftQueue()
     loadAutonomousLearningSnapshot()
   }
 
   fun closeSkillDiffPreview() {
-    _state.update { it.copy(skillDiffPreview = null) }
+    _state.update { it.copy(skillDiffPreview = null, skillDiffFiles = emptyList()) }
   }
 
   fun loadLearnedSkillDraftQueue() {
@@ -525,6 +562,12 @@ class HanakoChatController(
 
   fun setSkillCuratorLoopEnabled(enabled: Boolean) {
     val state = skillCuratorLoopStore.setEnabled(enabled)
+    if (enabled) NbgSkillCuratorLoopWorkManager.ensureScheduled(appContext)
+    _state.update { it.copy(skillCuratorLoopState = state) }
+  }
+
+  fun setSkillCuratorLlmReviewEnabled(enabled: Boolean) {
+    val state = skillCuratorLoopStore.setLlmReviewEnabled(enabled)
     if (enabled) NbgSkillCuratorLoopWorkManager.ensureScheduled(appContext)
     _state.update { it.copy(skillCuratorLoopState = state) }
   }
@@ -809,6 +852,7 @@ class HanakoChatController(
       onEvent(HanakoChatEvent.SystemMessage(delegationReview.reason))
       return
     }
+    val parallelPlan = nbgBuildTeamParallelPlan(delegationReview)
     onEvent(HanakoChatEvent.UserMessage(prompt))
     scope.launch {
       ensureConnected()
@@ -849,10 +893,10 @@ class HanakoChatController(
       val pendingTask = HanakoTeamTaskStatus(
         taskId = pendingTaskId,
         title = delegationReview.title.ifBlank { nbgTeamTaskTitle(prompt) },
-        mode = HANA_TEAM_SINGLE_AGENT_SESSION_MODE,
+        mode = HANA_TEAM_MULTI_AGENT_SESSION_MODE,
         status = "queued",
-        summary = "${delegationReview.reason} 正在接入 HanakoPro 执行会话...",
-        agents = nbgSingleAgentSessionAgent(pendingTaskId, "queued", "等待 HanakoPro 接管任务"),
+        summary = "${delegationReview.reason} 并行计划：${parallelPlan.label}；隔离上下文 ${if (parallelPlan.isolatedContext) "开启" else "关闭"}；正在接入 HanakoPro 执行会话...",
+        agents = nbgMultiAgentSessionAgents(pendingTaskId, "queued").withParallelPlan(parallelPlan),
       )
       _state.update {
         it.copy(
@@ -872,8 +916,15 @@ class HanakoChatController(
           )
         }
       }.onSuccess { root ->
-        val nextTask = (parseHanakoTeamTaskStatus(root, pendingTask) ?: pendingTask.copy(status = "running"))
+        val parsedTask = (parseHanakoTeamTaskStatus(root, pendingTask) ?: pendingTask.copy(status = "running"))
           .normalizedAndroidTeamTask()
+        val nextTask = parsedTask.copy(
+          summary = listOf(
+            parsedTask.summary,
+            "并行计划：${parallelPlan.label}${if (parallelPlan.isolatedContext) " · 隔离上下文" else ""}${if (parallelPlan.consolidationRequired) " · 需合并" else ""}",
+          ).filter { it.isNotBlank() }.distinct().joinToString(" "),
+          agents = (parsedTask.agents.ifEmpty { nbgMultiAgentSessionAgents(parsedTask.taskId, parsedTask.status) }).withParallelPlan(parallelPlan),
+        )
         _state.update {
           it.copy(
             teamTask = nextTask,
@@ -1112,11 +1163,26 @@ class HanakoChatController(
   private fun handleLocalSlash(text: String): Boolean {
     val command = text.trim()
     val verb = command.substringBefore(' ').lowercase()
+    val arg = command.substringAfter(' ', "").trim()
     return when (verb) {
       "/compress" -> {
         learnFromUserTurn(command)
         onEvent(HanakoChatEvent.UserMessage(command))
-        compressForkSession()
+        when (arg.lowercase()) {
+          "auto" -> {
+            setContextCompressionMode(NbgContextCompressionMode.Auto)
+            onEvent(HanakoChatEvent.SystemMessage("上下文压缩策略：自动"))
+          }
+          "off", "关闭" -> {
+            setContextCompressionMode(NbgContextCompressionMode.Off)
+            onEvent(HanakoChatEvent.SystemMessage("上下文压缩策略：关闭"))
+          }
+          "remind", "提醒" -> {
+            setContextCompressionMode(NbgContextCompressionMode.Remind)
+            onEvent(HanakoChatEvent.SystemMessage("上下文压缩策略：提醒"))
+          }
+          else -> compressForkSession()
+        }
         true
       }
       "/usage" -> {
@@ -1132,6 +1198,64 @@ class HanakoChatController(
         onEvent(HanakoChatEvent.UserMessage(command))
         refreshContextInsights()
         onEvent(HanakoChatEvent.SystemMessage(nbgContextInsightsSystemMessage(_state.value.contextInsights)))
+        true
+      }
+      "/search" -> {
+        learnFromUserTurn(command)
+        onEvent(HanakoChatEvent.UserMessage(command))
+        searchLocalSessionsFts(arg)
+        onEvent(HanakoChatEvent.SystemMessage(nbgSessionFtsSystemMessage(_state.value.sessionFtsHits)))
+        true
+      }
+      "/cost" -> {
+        learnFromUserTurn(command)
+        onEvent(HanakoChatEvent.UserMessage(command))
+        loadUsageCostState()
+        onEvent(HanakoChatEvent.SystemMessage(nbgUsageCostSystemMessage(_state.value.usageCostState)))
+        true
+      }
+      "/memory" -> {
+        learnFromUserTurn(command)
+        onEvent(HanakoChatEvent.UserMessage(command))
+        val memory = _state.value.autonomousLearningSnapshot.localMemory
+        onEvent(HanakoChatEvent.SystemMessage("Memory：${memory.enabledEntries.size} 条本地记忆，外部 provider ${_state.value.externalMemoryProviderState.enabledCount} 个启用。"))
+        true
+      }
+      "/provider", "/providers", "/model" -> {
+        learnFromUserTurn(command)
+        onEvent(HanakoChatEvent.UserMessage(command))
+        val providers = nbgProfilesForStoredApis(NbgApiStore(appContext).load())
+        _state.update { it.copy(modelProviderProfileState = providers) }
+        onEvent(HanakoChatEvent.SystemMessage("ProviderProfile：${providers.profileCount} 个；当前模型 ${_state.value.modelName ?: "未选择"}。"))
+        true
+      }
+      "/skills" -> {
+        learnFromUserTurn(command)
+        onEvent(HanakoChatEvent.UserMessage(command))
+        onEvent(HanakoChatEvent.SystemMessage("Skills：${_state.value.skillsSnapshot.visibleSkills.size} 个可见，${_state.value.learnedSkillDraftQueue.pendingReviewCount} 个学习草稿待复核。"))
+        true
+      }
+      "/tools" -> {
+        learnFromUserTurn(command)
+        onEvent(HanakoChatEvent.UserMessage(command))
+        onEvent(HanakoChatEvent.SystemMessage("Tools：请在 Toolsets Doctor 查看启用状态；MCP connector 仍受本地治理和权限策略控制。"))
+        true
+      }
+      "/agents" -> {
+        learnFromUserTurn(command)
+        onEvent(HanakoChatEvent.UserMessage(command))
+        onEvent(HanakoChatEvent.SystemMessage(_state.value.teamTask?.teamRuntimeLabel() ?: "Agents：当前没有运行中的团队任务。"))
+        true
+      }
+      "/curator" -> {
+        learnFromUserTurn(command)
+        onEvent(HanakoChatEvent.UserMessage(command))
+        if (arg.equals("llm", ignoreCase = true)) {
+          setSkillCuratorLlmReviewEnabled(!_state.value.skillCuratorLoopState.llmReviewEnabled)
+        } else {
+          runSkillCuratorLoopNow()
+        }
+        onEvent(HanakoChatEvent.SystemMessage("Curator：${_state.value.skillCuratorLoopState.statusLabel}"))
         true
       }
       else -> false
@@ -1927,14 +2051,17 @@ class HanakoChatController(
   }
 
   fun runSkillCuratorLoopNow() {
-    val state = skillCuratorLoopRunner.runOnce(snapshot = _state.value.rawSkillsSnapshot)
-    val metadata = skillCuratorStore.load()
-    _state.update { current ->
-      current.withSkillCuratorMetadata(metadata).copy(
-        skillCuratorLoopState = state,
-        skillsError = null,
-        lastError = state.lastError.ifBlank { current.lastError },
-      )
+    scope.launch {
+      var state = withContext(Dispatchers.IO) { skillCuratorLoopRunner.runOnce(snapshot = _state.value.rawSkillsSnapshot) }
+      state = withContext(Dispatchers.IO) { skillCuratorLlmLoop.runOnce(snapshot = _state.value.rawSkillsSnapshot) }
+      val metadata = skillCuratorStore.load()
+      _state.update { current ->
+        current.withSkillCuratorMetadata(metadata).copy(
+          skillCuratorLoopState = state,
+          skillsError = null,
+          lastError = state.lastError.ifBlank { current.lastError },
+        )
+      }
     }
   }
 
@@ -3805,6 +3932,7 @@ class HanakoChatController(
         contextInsights = nbgBuildContextInsights(latestContextUsage, it.autonomousLearningSnapshot, it.sessions),
       )
     }
+    maybeTriggerContextCompressionStrategy(latestContextUsage)
   }
 
   private fun handleCompactionStatus(running: Boolean, msg: JSONObject) {
@@ -3858,11 +3986,35 @@ class HanakoChatController(
       compressionAvailable = _state.value.compressionAvailable,
       updatedAtMs = System.currentTimeMillis(),
     )
+    val usageState = usageCostStore.record(
+      NbgUsageCostEvent(
+        providerId = defaultUrlApi?.first?.name.orEmpty(),
+        modelId = defaultUrlApi?.second?.id ?: _state.value.modelName.orEmpty(),
+        sessionPath = _state.value.sessionPath.orEmpty(),
+        inputTokens = input.coerceAtLeast(0L),
+        outputTokens = output.coerceAtLeast(0L),
+        totalTokens = total.coerceAtLeast(0L),
+        createdAtMs = System.currentTimeMillis(),
+      ),
+    )
     _state.update {
       it.copy(
         runtimeStatus = it.runtimeStatus.copy(usageLabel = label),
         contextInsights = nbgBuildContextInsights(latestContextUsage, it.autonomousLearningSnapshot, it.sessions),
+        usageCostState = usageState,
       )
+    }
+  }
+
+  private fun maybeTriggerContextCompressionStrategy(usage: NbgContextUsageSnapshot) {
+    val strategy = contextCompressionStrategyStore.load()
+    if (!strategy.shouldTrigger(usage)) return
+    val recorded = contextCompressionStrategyStore.recordTrigger()
+    _state.update { it.copy(contextCompressionStrategy = recorded) }
+    when (strategy.mode) {
+      NbgContextCompressionMode.Remind -> onEvent(HanakoChatEvent.SystemMessage("上下文已达到 ${usage.percentUsed}%，建议使用 /compress 压缩当前会话。"))
+      NbgContextCompressionMode.Auto -> if (!_state.value.streaming) compressForkSession()
+      NbgContextCompressionMode.Off -> Unit
     }
   }
 
@@ -4121,3 +4273,15 @@ private fun nbgContextInsightsSystemMessage(insights: NbgContextInsights): Strin
     append(" · ")
     append(insights.suggestion)
   }
+
+private fun nbgSessionFtsSystemMessage(hits: List<NbgSessionFtsHit>): String =
+  if (hits.isEmpty()) {
+    "本地 FTS：没有命中。"
+  } else {
+    hits.take(5).joinToString("\n") { hit ->
+      "- ${hit.title} · ${hit.matchType} · score ${hit.score}: ${hit.snippet.take(90)}"
+    }.let { "本地 FTS 命中 ${hits.size} 条：\n$it" }
+  }
+
+private fun nbgUsageCostSystemMessage(state: NbgUsageCostState): String =
+  "成本/用量：${formatTokenCount(state.totalTokens)} tokens · 估算 $${String.format(java.util.Locale.US, "%.4f", state.estimatedCostUsd)} · 失败 ${state.failureCount}"

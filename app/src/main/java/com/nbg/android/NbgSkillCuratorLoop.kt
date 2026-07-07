@@ -20,6 +20,10 @@ data class NbgSkillCuratorLoopState(
   val archivedCount: Int = 0,
   val lastRunAtMs: Long = 0L,
   val lastActionCount: Int = 0,
+  val llmReviewEnabled: Boolean = false,
+  val lastLlmReviewAtMs: Long = 0L,
+  val lastLlmSuggestionCount: Int = 0,
+  val lastLlmSuggestion: String = "",
   val lastError: String = "",
   val modelVersion: String = NBG_SKILL_CURATOR_LOOP_VERSION,
 ) {
@@ -27,6 +31,7 @@ data class NbgSkillCuratorLoopState(
     get() = when {
       !enabled -> "后台复核关闭"
       lastError.isNotBlank() -> "后台复核需检查"
+      llmReviewEnabled && lastLlmReviewAtMs > 0L -> "后台复核 + LLM 建议已运行"
       lastRunAtMs > 0L -> "后台复核已运行"
       else -> "后台复核待运行"
     }
@@ -47,6 +52,23 @@ internal class NbgSkillCuratorLoopStore(context: Context) {
   fun setEnabled(enabled: Boolean): NbgSkillCuratorLoopState =
     save(load().copy(enabled = enabled))
 
+  fun setLlmReviewEnabled(enabled: Boolean): NbgSkillCuratorLoopState =
+    load().let { current ->
+      save(current.copy(enabled = if (enabled) true else current.enabled, llmReviewEnabled = enabled))
+    }
+
+  fun recordLlmReview(result: NbgSkillCuratorLlmReviewResult, nowMs: Long = System.currentTimeMillis()): NbgSkillCuratorLoopState {
+    val current = load()
+    return save(
+      current.copy(
+        lastLlmReviewAtMs = if (result.ok) nowMs.coerceAtLeast(0L) else current.lastLlmReviewAtMs,
+        lastLlmSuggestionCount = if (result.ok) result.suggestions.size else current.lastLlmSuggestionCount,
+        lastLlmSuggestion = if (result.ok) result.suggestions.joinToString("; ") { "${it.skillName}:${it.action}:${it.reason}" }.take(700) else current.lastLlmSuggestion,
+        lastError = if (result.ok) "" else result.message.take(180),
+      ),
+    )
+  }
+
   private companion object {
     const val PREFS = "nbg_skill_curator_loop"
     const val KEY_STATE = "state"
@@ -60,6 +82,7 @@ class NbgSkillCuratorLoopWorker(
   override suspend fun doWork(): Result =
     runCatching {
       NbgSkillCuratorLoopRunner(applicationContext).runOnce()
+      NbgSkillCuratorAndroidLlmLoop(applicationContext).runOnce()
       Result.success()
     }.getOrElse {
       Result.retry()
@@ -157,6 +180,10 @@ internal fun parseNbgSkillCuratorLoopState(raw: String?): NbgSkillCuratorLoopSta
       archivedCount = root.optInt("archivedCount", 0),
       lastRunAtMs = root.optLong("lastRunAtMs", 0L),
       lastActionCount = root.optInt("lastActionCount", 0),
+      llmReviewEnabled = root.optBoolean("llmReviewEnabled", false),
+      lastLlmReviewAtMs = root.optLong("lastLlmReviewAtMs", 0L),
+      lastLlmSuggestionCount = root.optInt("lastLlmSuggestionCount", 0),
+      lastLlmSuggestion = root.cleanString("lastLlmSuggestion").orEmpty(),
       lastError = root.cleanString("lastError").orEmpty(),
     ).normalized()
   }.getOrDefault(NbgSkillCuratorLoopState())
@@ -168,6 +195,9 @@ private fun NbgSkillCuratorLoopState.normalized(): NbgSkillCuratorLoopState =
     archivedCount = archivedCount.coerceAtLeast(0),
     lastRunAtMs = lastRunAtMs.coerceAtLeast(0L),
     lastActionCount = lastActionCount.coerceAtLeast(0),
+    lastLlmReviewAtMs = lastLlmReviewAtMs.coerceAtLeast(0L),
+    lastLlmSuggestionCount = lastLlmSuggestionCount.coerceAtLeast(0),
+    lastLlmSuggestion = lastLlmSuggestion.trim().take(700),
     lastError = lastError.trim().take(180),
   )
 
@@ -180,5 +210,44 @@ private fun NbgSkillCuratorLoopState.toJsonString(): String =
     .put("archivedCount", archivedCount)
     .put("lastRunAtMs", lastRunAtMs)
     .put("lastActionCount", lastActionCount)
+    .put("llmReviewEnabled", llmReviewEnabled)
+    .put("lastLlmReviewAtMs", lastLlmReviewAtMs)
+    .put("lastLlmSuggestionCount", lastLlmSuggestionCount)
+    .put("lastLlmSuggestion", lastLlmSuggestion)
     .put("lastError", lastError)
     .toString()
+
+internal class NbgSkillCuratorAndroidLlmLoop(
+  context: Context,
+  private val loopStore: NbgSkillCuratorLoopStore = NbgSkillCuratorLoopStore(context),
+  private val apiStore: NbgApiStore = NbgApiStore(context),
+  private val curatorStore: NbgSkillCuratorStore = NbgSkillCuratorStore(context),
+  private val draftStore: NbgLearnedSkillDraftStore = NbgLearnedSkillDraftStore(context),
+  private val runner: NbgSkillCuratorLlmReviewRunner = NbgSkillCuratorLlmReviewRunner(),
+) {
+  private val appContext = context.applicationContext
+
+  suspend fun runOnce(snapshot: HanakoSkillsSnapshot? = null): NbgSkillCuratorLoopState {
+    val state = loopStore.load()
+    if (!state.enabled || !state.llmReviewEnabled) return state
+    val modelSelection = apiStore.load()
+      .asSequence()
+      .mapNotNull { entry ->
+        val modelId = entry.selectedModelId.ifBlank { entry.verifiedModelIds.firstOrNull().orEmpty() }
+        val model = entry.models.firstOrNull { it.id == modelId } ?: modelId.takeIf { it.isNotBlank() }?.let { NbgApiModel(it) }
+        model?.let { entry to it }
+      }
+      .firstOrNull()
+      ?: return loopStore.recordLlmReview(NbgSkillCuratorLlmReviewResult(false, "没有可用 URL API 模型"))
+    val effectiveSnapshot = snapshot?.takeIf { it.visibleSkills.isNotEmpty() }
+      ?: nbgLocalLearnedSkillSnapshot(File(appContext.filesDir, "learned-skills"))
+    val result = runner.run(
+      entry = modelSelection.first,
+      model = modelSelection.second,
+      snapshot = effectiveSnapshot,
+      metadata = curatorStore.load(),
+      drafts = draftStore.load(),
+    )
+    return loopStore.recordLlmReview(result)
+  }
+}

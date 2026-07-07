@@ -276,18 +276,20 @@ class NbgUpstreamApiClient {
   suspend fun fetchModels(baseUrl: String, apiKey: String): NbgApiModelFetchResult =
     withContext(Dispatchers.IO) {
       val normalized = nbgNormalizeApiBaseUrl(baseUrl)
+      val profile = nbgProfileForUrlApi(normalized)
       if (normalized.isBlank() || apiKey.isBlank()) {
         return@withContext NbgApiModelFetchResult(emptyList(), "请先填写地址和 API Key")
       }
       var lastError = ""
       val candidates = listOf(
+        profile.modelsEndpoint(normalized),
         nbgApiEndpoint(normalized, "/v1/models"),
         nbgApiEndpoint(normalized, "/models"),
       ).distinct()
       for (url in candidates) {
         val request = Request.Builder()
           .url(url)
-          .addApiHeaders(apiKey)
+          .addApiHeaders(apiKey, profile)
           .get()
           .build()
         runCatching {
@@ -313,11 +315,21 @@ class NbgUpstreamApiClient {
   suspend fun verifyModel(baseUrl: String, apiKey: String, modelId: String): NbgApiModelVerifyResult =
     withContext(Dispatchers.IO) {
       val normalized = nbgNormalizeApiBaseUrl(baseUrl)
+      val profile = nbgProfileForUrlApi(normalized, modelId)
       if (normalized.isBlank() || apiKey.isBlank() || modelId.isBlank()) {
         return@withContext NbgApiModelVerifyResult(false, "地址、API Key 和模型不能为空")
       }
       var lastError = ""
       val probes = buildList {
+        add(
+          NbgApiProbe(
+            wire = if (profile.apiMode == "anthropic") "Anthropic" else "OpenAI",
+            url = profile.chatEndpoint(normalized),
+            effectiveBaseUrl = nbgHanakoBaseUrlForUrlApi(normalized, profile.apiMode),
+            body = if (profile.apiMode == "anthropic") nbgAnthropicProbeBody(modelId) else profile.applyExtraBody(nbgOpenAiProbeBodies(modelId).first()),
+            profile = profile,
+          ),
+        )
         listOf(
           nbgApiEndpoint(normalized, "/v1/chat/completions"),
           nbgApiEndpoint(normalized, "/chat/completions"),
@@ -329,6 +341,7 @@ class NbgUpstreamApiClient {
                 url = endpoint,
                 effectiveBaseUrl = nbgOpenAiBaseUrlForEndpoint(endpoint),
                 body = body,
+                profile = profile,
               ),
             )
           }
@@ -343,6 +356,7 @@ class NbgUpstreamApiClient {
               url = endpoint,
               effectiveBaseUrl = nbgAnthropicBaseUrlForEndpoint(endpoint),
               body = nbgAnthropicProbeBody(modelId),
+              profile = profile.copy(apiMode = "anthropic"),
             ),
           )
         }
@@ -350,7 +364,7 @@ class NbgUpstreamApiClient {
       for (probe in probes) {
         val request = Request.Builder()
           .url(probe.url)
-          .addApiHeaders(apiKey)
+          .addApiHeaders(apiKey, probe.profile)
           .post(probe.body.toString().toRequestBody(JSON))
           .build()
         runCatching {
@@ -395,11 +409,12 @@ class NbgUpstreamApiClient {
         return@withContext NbgSkillDescriptionTranslateResult(emptyMap(), "没有可翻译的 Skill 描述")
       }
       val prompt = buildSkillDescriptionTranslationPrompt(targets)
-      val provider = nbgHanakoProviderForUrlApi(normalized, model.id)
+      val profile = nbgProfileForUrlApi(normalized, model.id)
+      val provider = profile.apiMode.ifBlank { nbgHanakoProviderForUrlApi(normalized, model.id) }
       val candidates = if (provider == "anthropic") {
         listOf(nbgApiEndpoint(normalized, "/v1/messages"), nbgApiEndpoint(normalized, "/messages")).distinct()
       } else {
-        listOf(nbgApiEndpoint(normalized, "/v1/chat/completions"), nbgApiEndpoint(normalized, "/chat/completions")).distinct()
+        listOf(profile.chatEndpoint(normalized), nbgApiEndpoint(normalized, "/v1/chat/completions"), nbgApiEndpoint(normalized, "/chat/completions")).distinct()
       }
       var lastError = ""
       for (url in candidates) {
@@ -421,10 +436,11 @@ class NbgUpstreamApiClient {
             .put("temperature", 0)
             .put("max_tokens", 1600)
             .put("stream", false)
+            .let(profile::applyExtraBody)
         }
         val request = Request.Builder()
           .url(url)
-          .addApiHeaders(entry.apiKey)
+          .addApiHeaders(entry.apiKey, profile)
           .post(body.toString().toRequestBody(JSON))
           .build()
         runCatching {
@@ -460,11 +476,12 @@ class NbgUpstreamApiClient {
       if (normalized.isBlank() || entry.apiKey.isBlank() || model.id.isBlank() || cleanPrompt.isBlank()) {
         return@withContext NbgUrlApiTextGenerationResult(false, "", "没有可用的 URL API 模型或评审问题")
       }
-      val provider = nbgHanakoProviderForUrlApi(normalized, model.id)
+      val profile = nbgProfileForUrlApi(normalized, model.id)
+      val provider = profile.apiMode.ifBlank { nbgHanakoProviderForUrlApi(normalized, model.id) }
       val candidates = if (provider == "anthropic") {
         listOf(nbgApiEndpoint(normalized, "/v1/messages"), nbgApiEndpoint(normalized, "/messages")).distinct()
       } else {
-        listOf(nbgApiEndpoint(normalized, "/v1/chat/completions"), nbgApiEndpoint(normalized, "/chat/completions")).distinct()
+        listOf(profile.chatEndpoint(normalized), nbgApiEndpoint(normalized, "/v1/chat/completions"), nbgApiEndpoint(normalized, "/chat/completions")).distinct()
       }
       var lastError = ""
       for (url in candidates) {
@@ -487,10 +504,11 @@ class NbgUpstreamApiClient {
             .put("temperature", 0)
             .put("max_tokens", 2200)
             .put("stream", false)
+            .let(profile::applyExtraBody)
         }
         val request = Request.Builder()
           .url(url)
-          .addApiHeaders(entry.apiKey)
+          .addApiHeaders(entry.apiKey, profile)
           .post(body.toString().toRequestBody(JSON))
           .build()
         runCatching {
@@ -513,8 +531,9 @@ class NbgUpstreamApiClient {
       NbgUrlApiTextGenerationResult(false, "", "生成失败：$lastError")
     }
 
-  private fun Request.Builder.addApiHeaders(apiKey: String): Request.Builder =
-    addHeader("Authorization", "Bearer $apiKey")
+  private fun Request.Builder.addApiHeaders(apiKey: String, profile: NbgModelProviderProfile = nbgDefaultModelProviderProfiles().first { it.id == "openai" }): Request.Builder =
+    addHeader(profile.authHeader.ifBlank { "Authorization" }, "${profile.authPrefix}$apiKey".trim())
+      .addHeader("Authorization", "Bearer $apiKey")
       .addHeader("x-api-key", apiKey)
       .addHeader("anthropic-version", "2023-06-01")
       .header("User-Agent", NBG_UPSTREAM_USER_AGENT)
@@ -525,6 +544,7 @@ class NbgUpstreamApiClient {
     val url: String,
     val effectiveBaseUrl: String,
     val body: JSONObject,
+    val profile: NbgModelProviderProfile,
   )
 
   private companion object {

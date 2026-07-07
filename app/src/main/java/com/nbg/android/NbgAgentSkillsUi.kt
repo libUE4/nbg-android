@@ -57,6 +57,7 @@ internal fun NbgSkillsScreen(
   skillCuratorMetadata: NbgSkillCuratorMetadata = NbgSkillCuratorMetadata(),
   skillCuratorLoopState: NbgSkillCuratorLoopState = NbgSkillCuratorLoopState(),
   skillDiffPreview: NbgSkillDiffPreview? = null,
+  skillDiffFiles: List<NbgSkillDiffFile> = emptyList(),
   learnedDraftQueue: NbgLearnedSkillDraftQueue = NbgLearnedSkillDraftQueue(),
   loading: Boolean,
   error: String?,
@@ -81,8 +82,9 @@ internal fun NbgSkillsScreen(
   onRestoreSkill: (String) -> Unit = {},
   onRunCuratorReview: () -> Unit = {},
   onSetCuratorLoopEnabled: (Boolean) -> Unit = {},
+  onSetCuratorLlmReviewEnabled: (Boolean) -> Unit = {},
   onRunCuratorLoopNow: () -> Unit = {},
-  onPreviewCurrentSkillDiff: (String) -> Unit = {},
+  onPreviewCurrentSkillDiff: (String, String) -> Unit = { _, _ -> },
   onApplySkillDiffMerge: (Set<Int>) -> Unit = {},
   onCloseSkillDiffPreview: () -> Unit = {},
 ) {
@@ -133,6 +135,7 @@ internal fun NbgSkillsScreen(
           onRestore = onRestoreSkill,
           onRunReview = onRunCuratorReview,
           onSetLoopEnabled = onSetCuratorLoopEnabled,
+          onSetLlmReviewEnabled = onSetCuratorLlmReviewEnabled,
           onRunLoopNow = onRunCuratorLoopNow,
         )
       }
@@ -140,6 +143,7 @@ internal fun NbgSkillsScreen(
         NbgSkillDiffMergeCard(
           queue = learnedDraftQueue,
           preview = skillDiffPreview,
+          files = skillDiffFiles,
           busy = busyKey != null,
           onPreviewSkill = onPreviewCurrentSkillDiff,
           onApplySelection = onApplySkillDiffMerge,
@@ -507,8 +511,9 @@ private fun NbgLearnedSkillDraftRow(
 private fun NbgSkillDiffMergeCard(
   queue: NbgLearnedSkillDraftQueue,
   preview: NbgSkillDiffPreview?,
+  files: List<NbgSkillDiffFile>,
   busy: Boolean,
-  onPreviewSkill: (String) -> Unit,
+  onPreviewSkill: (String, String) -> Unit,
   onApplySelection: (Set<Int>) -> Unit,
   onClosePreview: () -> Unit,
 ) {
@@ -590,7 +595,7 @@ private fun NbgSkillDiffMergeCard(
                 label = "审查",
                 icon = Icons.Filled.Visibility,
                 enabled = !busy,
-                onClick = { onPreviewSkill(draft.skillName) },
+                onClick = { onPreviewSkill(draft.skillName, "SKILL.md") },
               )
             }
           }
@@ -598,13 +603,48 @@ private fun NbgSkillDiffMergeCard(
         return@Column
       }
       Text(
-        text = "${preview.skillName} · +${preview.addedCount} / -${preview.removedCount} · ${preview.message.ifBlank { "diff preview" }}",
+        text = "${preview.skillName}/${preview.relativePath} · +${preview.addedCount} / -${preview.removedCount} · ${preview.message.ifBlank { "diff preview" }}",
         color = NbgAgentColors.TextMuted,
         fontSize = 11.sp,
         lineHeight = 15.sp,
         maxLines = 2,
         overflow = TextOverflow.Ellipsis,
       )
+      if (files.isNotEmpty()) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+          files.take(6).forEach { file ->
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                  text = file.relativePath,
+                  color = if (file.relativePath == preview.relativePath) NbgAgentColors.Primary else NbgAgentColors.TextStrong,
+                  fontSize = 11.sp,
+                  fontWeight = if (file.relativePath == preview.relativePath) FontWeight.SemiBold else FontWeight.Normal,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                  text = "${file.sizeBytes} B${if (file.rollbackAvailable) " · rollback" else ""}",
+                  color = NbgAgentColors.TextMuted,
+                  fontSize = 10.sp,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+              }
+              NbgInlineActionButton(
+                label = "审查",
+                icon = Icons.Filled.Visibility,
+                enabled = !busy,
+                onClick = { onPreviewSkill(file.skillName, file.relativePath) },
+              )
+            }
+          }
+        }
+      }
       preview.hunks.take(3).forEach { hunk ->
         Surface(
           modifier = Modifier.fillMaxWidth(),
@@ -686,6 +726,7 @@ private fun NbgSkillCuratorCard(
   onRestore: (String) -> Unit,
   onRunReview: () -> Unit,
   onSetLoopEnabled: (Boolean) -> Unit,
+  onSetLlmReviewEnabled: (Boolean) -> Unit,
   onRunLoopNow: () -> Unit,
 ) {
   Surface(
@@ -749,9 +790,15 @@ private fun NbgSkillCuratorCard(
           enabled = !busy && loopState.enabled,
           onClick = onRunLoopNow,
         )
+        NbgInlineActionButton(
+          label = if (loopState.llmReviewEnabled) "LLM 开" else "LLM 关",
+          icon = if (loopState.llmReviewEnabled) Icons.Filled.CheckCircle else Icons.Filled.Block,
+          enabled = !busy,
+          onClick = { onSetLlmReviewEnabled(!loopState.llmReviewEnabled) },
+        )
       }
       Text(
-        text = "${loopState.statusLabel} · ${loopState.reviewCount} 次 · 已归档 ${loopState.archivedCount}",
+        text = "${loopState.statusLabel} · ${loopState.reviewCount} 次 · 已归档 ${loopState.archivedCount} · LLM ${loopState.lastLlmSuggestionCount} 条建议",
         color = if (loopState.lastError.isNotBlank()) NbgAgentColors.StatusRed else NbgAgentColors.TextMuted,
         fontSize = 11.sp,
         lineHeight = 15.sp,

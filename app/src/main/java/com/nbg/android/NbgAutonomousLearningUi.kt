@@ -12,7 +12,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.CheckCircle
@@ -21,7 +23,6 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.School
-import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.AlertDialog
@@ -50,6 +51,9 @@ internal fun NbgAutonomousLearningScreen(
   gatewayInboxState: NbgGatewayInboxState,
   externalMemoryProviderState: NbgExternalMemoryProviderState = NbgExternalMemoryProviderState(),
   contextInsights: NbgContextInsights = NbgContextInsights(),
+  contextCompressionStrategy: NbgContextCompressionStrategy = NbgContextCompressionStrategy(),
+  usageCostState: NbgUsageCostState = NbgUsageCostState(),
+  sessionFtsHits: List<NbgSessionFtsHit> = emptyList(),
   trajectoryExportBundle: NbgTrajectoryExportBundle?,
   onBack: () -> Unit,
   onOpenDrawer: () -> Unit,
@@ -57,7 +61,7 @@ internal fun NbgAutonomousLearningScreen(
   onCreateSchedule: (NbgScheduledAutomationTemplate) -> Unit,
   onToggleSchedule: (String, Boolean) -> Unit,
   onRunScheduleNow: (String) -> Unit,
-  onSaveMemoryProvider: (NbgExternalMemoryProviderConfig) -> Unit,
+  onSaveMemoryProvider: (NbgExternalMemoryProviderConfig, String) -> Unit,
   onToggleMemoryProvider: (String, Boolean) -> Unit,
   onArchiveGatewayMessage: (String) -> Unit,
   onBuildTrajectoryExport: () -> Unit,
@@ -66,6 +70,8 @@ internal fun NbgAutonomousLearningScreen(
   onBuildRecall: () -> Unit,
   onRefreshContextInsights: () -> Unit,
   onCompressContext: () -> Unit,
+  onSetContextCompressionMode: (NbgContextCompressionMode) -> Unit,
+  onSearchLocalSessionsFts: (String) -> Unit,
   onApproveEvent: (String) -> Unit,
   onRejectEvent: (String) -> Unit,
   onRevertEvent: (String) -> Unit,
@@ -80,6 +86,12 @@ internal fun NbgAutonomousLearningScreen(
   var providerEditTarget by remember { mutableStateOf<NbgExternalMemoryProviderConfig?>(null) }
   var providerEndpoint by remember { mutableStateOf("") }
   var providerAccount by remember { mutableStateOf("") }
+  var providerApiKey by remember { mutableStateOf("") }
+  var providerPrefetchPath by remember { mutableStateOf("") }
+  var providerSyncPath by remember { mutableStateOf("") }
+  var providerUserId by remember { mutableStateOf("") }
+  var providerAgentId by remember { mutableStateOf("") }
+  var sessionSearchQuery by remember { mutableStateOf("") }
   NbgShellSubPage(
     title = "Learning",
     subtitle = "Hermes 风格自主学习 · 本地审计",
@@ -99,8 +111,15 @@ internal fun NbgAutonomousLearningScreen(
       item {
         NbgContextInsightsCard(
           insights = contextInsights,
+          strategy = contextCompressionStrategy,
+          usageCostState = usageCostState,
+          sessionFtsHits = sessionFtsHits,
+          sessionSearchQuery = sessionSearchQuery,
+          onSessionSearchQueryChange = { sessionSearchQuery = it },
           onRefresh = onRefreshContextInsights,
           onCompress = onCompressContext,
+          onSetCompressionMode = onSetContextCompressionMode,
+          onSearchLocalSessions = { onSearchLocalSessionsFts(sessionSearchQuery) },
         )
       }
       item {
@@ -124,6 +143,11 @@ internal fun NbgAutonomousLearningScreen(
             providerEditTarget = provider
             providerEndpoint = provider.endpoint
             providerAccount = provider.accountLabel
+            providerApiKey = ""
+            providerPrefetchPath = provider.prefetchPath
+            providerSyncPath = provider.syncPath
+            providerUserId = provider.userId
+            providerAgentId = provider.agentId
           },
           onToggle = onToggleMemoryProvider,
         )
@@ -224,7 +248,10 @@ internal fun NbgAutonomousLearningScreen(
       onDismissRequest = { providerEditTarget = null },
       title = { Text("配置 ${provider.displayName}") },
       text = {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(
+          modifier = Modifier.verticalScroll(rememberScrollState()),
+          verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
           OutlinedTextField(
             value = providerEndpoint,
             onValueChange = { providerEndpoint = it },
@@ -239,11 +266,58 @@ internal fun NbgAutonomousLearningScreen(
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
           )
+          OutlinedTextField(
+            value = providerApiKey,
+            onValueChange = { providerApiKey = it },
+            label = { Text("API key / token") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+          )
+          OutlinedTextField(
+            value = providerPrefetchPath,
+            onValueChange = { providerPrefetchPath = it },
+            label = { Text("Prefetch path override") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+          )
+          OutlinedTextField(
+            value = providerSyncPath,
+            onValueChange = { providerSyncPath = it },
+            label = { Text("Sync path override") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+          )
+          Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+              value = providerUserId,
+              onValueChange = { providerUserId = it },
+              label = { Text("User ID") },
+              singleLine = true,
+              modifier = Modifier.weight(1f),
+            )
+            OutlinedTextField(
+              value = providerAgentId,
+              onValueChange = { providerAgentId = it },
+              label = { Text("Agent ID") },
+              singleLine = true,
+              modifier = Modifier.weight(1f),
+            )
+          }
         }
       },
       confirmButton = {
         TextButton(onClick = {
-          onSaveMemoryProvider(provider.copy(endpoint = providerEndpoint, accountLabel = providerAccount))
+          onSaveMemoryProvider(
+            provider.copy(
+              endpoint = providerEndpoint,
+              accountLabel = providerAccount,
+              prefetchPath = providerPrefetchPath,
+              syncPath = providerSyncPath,
+              userId = providerUserId,
+              agentId = providerAgentId,
+            ),
+            providerApiKey,
+          )
           providerEditTarget = null
         }) { Text("保存") }
       },
@@ -257,8 +331,15 @@ internal fun NbgAutonomousLearningScreen(
 @Composable
 private fun NbgContextInsightsCard(
   insights: NbgContextInsights,
+  strategy: NbgContextCompressionStrategy,
+  usageCostState: NbgUsageCostState,
+  sessionFtsHits: List<NbgSessionFtsHit>,
+  sessionSearchQuery: String,
+  onSessionSearchQueryChange: (String) -> Unit,
   onRefresh: () -> Unit,
   onCompress: () -> Unit,
+  onSetCompressionMode: (NbgContextCompressionMode) -> Unit,
+  onSearchLocalSessions: () -> Unit,
 ) {
   NbgLearningCard {
     Text(
@@ -273,16 +354,90 @@ private fun NbgContextInsightsCard(
       NbgLearningMetric("学习项", insights.learningItemCount, NbgAgentColors.StatusYellow, Modifier.weight(1f))
     }
     Text(
-      text = "${insights.usage.label} · ${insights.suggestion}",
+      text = "${insights.usage.label} · ${insights.suggestion} · 压缩策略 ${strategy.mode.label}/${strategy.thresholdPercent}%",
       color = NbgAgentColors.TextMuted,
       fontSize = 11.sp,
       lineHeight = 15.sp,
       maxLines = 2,
       overflow = TextOverflow.Ellipsis,
     )
+    Text(
+      text = "成本估算：${usageCostState.totalTokens} tokens · $${String.format(java.util.Locale.US, "%.4f", usageCostState.estimatedCostUsd)} · ${usageCostState.failureCount} 次失败",
+      color = NbgAgentColors.TextMuted,
+      fontSize = 11.sp,
+      lineHeight = 15.sp,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+    )
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
       NbgInlineActionButton(label = "刷新", icon = Icons.Filled.Refresh, onClick = onRefresh)
       NbgInlineActionButton(label = "压缩", icon = Icons.AutoMirrored.Filled.Undo, enabled = insights.usage.compressionAvailable, onClick = onCompress)
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      NbgInlineActionButton(
+        label = "提醒",
+        icon = Icons.Filled.History,
+        primary = strategy.mode == NbgContextCompressionMode.Remind,
+        onClick = { onSetCompressionMode(NbgContextCompressionMode.Remind) },
+      )
+      NbgInlineActionButton(
+        label = "自动",
+        icon = Icons.Filled.CheckCircle,
+        primary = strategy.mode == NbgContextCompressionMode.Auto,
+        onClick = { onSetCompressionMode(NbgContextCompressionMode.Auto) },
+      )
+      NbgInlineActionButton(
+        label = "关闭",
+        icon = Icons.Filled.Close,
+        primary = strategy.mode == NbgContextCompressionMode.Off,
+        onClick = { onSetCompressionMode(NbgContextCompressionMode.Off) },
+      )
+    }
+    Row(
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
+      modifier = Modifier.fillMaxWidth(),
+    ) {
+      OutlinedTextField(
+        value = sessionSearchQuery,
+        onValueChange = onSessionSearchQueryChange,
+        modifier = Modifier.weight(1f),
+        singleLine = true,
+        placeholder = { Text("搜索历史任务 / Memory / Skill") },
+      )
+      NbgInlineActionButton(
+        label = "搜索",
+        icon = Icons.Filled.History,
+        enabled = sessionSearchQuery.isNotBlank(),
+        onClick = onSearchLocalSessions,
+      )
+    }
+    sessionFtsHits.take(3).forEach { hit ->
+      Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = NbgAgentColors.SurfaceLow,
+        border = BorderStroke(1.dp, NbgAgentColors.InputBorder),
+      ) {
+        Column(modifier = Modifier.padding(horizontal = 9.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+          Text(
+            text = "${hit.title} · ${hit.matchType} · ${hit.score}",
+            color = NbgAgentColors.TextStrong,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+          Text(
+            text = hit.snippet,
+            color = NbgAgentColors.TextMuted,
+            fontSize = 10.5.sp,
+            lineHeight = 14.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
+      }
     }
   }
 }
@@ -772,7 +927,7 @@ private fun NbgLearningEventCard(
         NbgSmallIconAction(Icons.Filled.Close, "拒绝学习", onReject)
       }
       if (event.status == NbgLearningEventStatus.AutoApplied) {
-        NbgSmallIconAction(Icons.Filled.Undo, "撤回学习", onRevert)
+        NbgSmallIconAction(Icons.AutoMirrored.Filled.Undo, "撤回学习", onRevert)
       }
     }
     Text(

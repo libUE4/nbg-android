@@ -31,6 +31,7 @@ data class NbgSkillDiffHunk(
 data class NbgSkillDiffPreview(
   val skillName: String,
   val filePath: String,
+  val relativePath: String = "SKILL.md",
   val beforeText: String,
   val afterText: String,
   val beforeSha256: String,
@@ -49,6 +50,13 @@ data class NbgSkillDiffPreview(
     get() = hunks.sumOf { it.removedCount }
 }
 
+data class NbgSkillDiffFile(
+  val skillName: String,
+  val relativePath: String,
+  val sizeBytes: Long,
+  val rollbackAvailable: Boolean = false,
+)
+
 data class NbgSkillMergeSelection(
   val acceptedHunkIndexes: Set<Int>,
 ) {
@@ -64,8 +72,9 @@ internal class NbgSkillDiffMerge(
 
   fun preview(request: NbgSkillManageRequest): NbgSkillDiffPreview {
     val name = request.name.nbgSkillDiffSafeName()
-    val file = resolveSkillFile(name, request.filePath.ifBlank { "SKILL.md" })
-    if (name.isBlank() || file == null) return emptyPreview(name, request.filePath, "bad skill or file path")
+    val relativePath = request.filePath.nbgSkillDiffRelativePath()
+    val file = resolveSkillFile(name, relativePath)
+    if (name.isBlank() || file == null) return emptyPreview(name, relativePath, "bad skill or file path")
     val before = if (file.isFile) file.readText(Charsets.UTF_8) else ""
     val after = when (request.action) {
       NbgSkillManageAction.Create,
@@ -80,6 +89,7 @@ internal class NbgSkillDiffMerge(
     return previewTexts(
       skillName = name,
       filePath = file.nbgSkillDiffPathLabel(),
+      relativePath = relativePath,
       beforeText = before,
       afterText = after,
       rollbackAvailable = rollbackFileFor(file).isFile,
@@ -88,19 +98,42 @@ internal class NbgSkillDiffMerge(
 
   fun previewCurrent(skillName: String, filePath: String = "SKILL.md"): NbgSkillDiffPreview {
     val name = skillName.nbgSkillDiffSafeName()
-    val file = resolveSkillFile(name, filePath.ifBlank { "SKILL.md" })
-    if (name.isBlank() || file == null) return emptyPreview(name, filePath, "bad skill or file path")
+    val relativePath = filePath.nbgSkillDiffRelativePath()
+    val file = resolveSkillFile(name, relativePath)
+    if (name.isBlank() || file == null) return emptyPreview(name, relativePath, "bad skill or file path")
     val current = if (file.isFile) file.readText(Charsets.UTF_8) else ""
     val rollback = rollbackFileFor(file)
     val previous = if (rollback.isFile) rollback.readText(Charsets.UTF_8) else ""
     return previewTexts(
       skillName = name,
       filePath = file.nbgSkillDiffPathLabel(),
+      relativePath = relativePath,
       beforeText = previous,
       afterText = current,
       rollbackAvailable = rollback.isFile,
       message = if (rollback.isFile) "rollback comparison" else "no rollback snapshot",
     )
+  }
+
+  fun listFiles(skillName: String): List<NbgSkillDiffFile> {
+    val name = skillName.nbgSkillDiffSafeName()
+    if (name.isBlank()) return emptyList()
+    val root = skillRoot.resolve(name.nbgSkillDiffSafeDir()).canonicalFile
+    if (!root.isDirectory) return emptyList()
+    return root.walkTopDown()
+      .filter { it.isFile && ".nbg-rollback" !in it.relativeTo(root).path && ".nbg-archive" !in it.relativeTo(root).path }
+      .map { file ->
+        val rel = file.relativeTo(root).path.replace(File.separatorChar, '/')
+        NbgSkillDiffFile(
+          skillName = name,
+          relativePath = rel,
+          sizeBytes = file.length().coerceAtLeast(0L),
+          rollbackAvailable = rollbackFileFor(file).isFile,
+        )
+      }
+      .sortedWith(compareBy<NbgSkillDiffFile> { it.relativePath != "SKILL.md" }.thenBy { it.relativePath })
+      .take(80)
+      .toList()
   }
 
   fun applyMergedPreview(
@@ -115,17 +148,27 @@ internal class NbgSkillDiffMerge(
     } else {
       nbgMergeSkillDiffHunks(preview.beforeText, preview.afterText, preview.hunks, accepted)
     }
-    return NbgSkillManageRequest(
-      action = NbgSkillManageAction.Edit,
-      name = preview.skillName,
-      content = merged,
-      filePath = preview.filePath,
-    )
+    return if (preview.relativePath == "SKILL.md") {
+      NbgSkillManageRequest(
+        action = if (preview.beforeText.isBlank()) NbgSkillManageAction.Create else NbgSkillManageAction.Edit,
+        name = preview.skillName,
+        content = merged,
+        filePath = preview.relativePath,
+      )
+    } else {
+      NbgSkillManageRequest(
+        action = NbgSkillManageAction.WriteFile,
+        name = preview.skillName,
+        filePath = preview.relativePath,
+        fileContent = merged,
+      )
+    }
   }
 
   private fun previewTexts(
     skillName: String,
     filePath: String,
+    relativePath: String,
     beforeText: String,
     afterText: String,
     rollbackAvailable: Boolean,
@@ -134,6 +177,7 @@ internal class NbgSkillDiffMerge(
     NbgSkillDiffPreview(
       skillName = skillName,
       filePath = filePath,
+      relativePath = relativePath,
       beforeText = beforeText,
       afterText = afterText,
       beforeSha256 = beforeText.sha256Hex(),
@@ -147,6 +191,7 @@ internal class NbgSkillDiffMerge(
     NbgSkillDiffPreview(
       skillName = skillName,
       filePath = filePath,
+      relativePath = filePath.nbgSkillDiffRelativePath(),
       beforeText = "",
       afterText = "",
       beforeSha256 = "".sha256Hex(),
@@ -294,6 +339,13 @@ private fun String.nbgSkillDiffContent(limit: Int = 120_000): String =
     .replace("\r\n", "\n")
     .trim()
     .take(limit.coerceAtLeast(0))
+
+private fun String.nbgSkillDiffRelativePath(): String =
+  replace('\\', '/')
+    .trim()
+    .trimStart('/')
+    .ifBlank { "SKILL.md" }
+    .take(240)
 
 private fun File.nbgSkillDiffPathLabel(): String =
   if (path.isBlank()) "" else "[local-path]"

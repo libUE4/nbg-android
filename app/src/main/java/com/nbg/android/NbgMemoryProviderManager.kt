@@ -80,10 +80,12 @@ internal class NbgSharedPreferencesMemoryProviderManagerStorage(context: Context
 internal class NbgMemoryProviderManager(
   private val learningEngine: NbgAutonomousLearningEngine,
   private val storage: NbgMemoryProviderManagerStorage,
+  private val externalAdapter: NbgExternalMemoryAdapter? = null,
 ) {
   constructor(context: Context) : this(
     learningEngine = NbgAutonomousLearningEngine(context),
     storage = NbgSharedPreferencesMemoryProviderManagerStorage(context),
+    externalAdapter = NbgExternalMemoryAdapter(context),
   )
 
   fun load(): NbgMemoryProviderManagerState =
@@ -107,6 +109,9 @@ internal class NbgMemoryProviderManager(
       itemCount = items.size,
       createdAtMs = nowMs.coerceAtLeast(0L),
     )
+    val externalBlocks = externalAdapter
+      ?.prefetchAll(query = cleanQuery, sessionId = "", limit = limit, nowMs = nowMs)
+      .orEmpty()
     val state = save(
       load().copy(
         prefetchCount = load().prefetchCount + 1,
@@ -117,7 +122,7 @@ internal class NbgMemoryProviderManager(
     )
     return NbgMemoryProviderPrefetchResult(
       query = cleanQuery,
-      blocks = listOf(block).filter { it.text.isNotBlank() },
+      blocks = (listOf(block) + externalBlocks).filter { it.text.isNotBlank() },
       snapshot = snapshot,
       state = state,
     )
@@ -128,12 +133,14 @@ internal class NbgMemoryProviderManager(
     nowMs: Long = System.currentTimeMillis(),
   ): NbgAutonomousLearningSnapshot {
     val snapshot = learningEngine.learnFromTurn(turn, nowMs = nowMs)
+    val externalResults = externalAdapter?.syncAll(turn, nowMs = nowMs).orEmpty()
+    val externalError = externalResults.firstOrNull { !it.ok }?.message.orEmpty()
     save(
       load().copy(
         syncCount = load().syncCount + 1,
         lastQuery = listOf(turn.userText, turn.assistantText).joinToString(" ").nbgMemoryProviderCompact(limit = 500),
         lastSyncAtMs = nowMs.coerceAtLeast(0L),
-        lastError = "",
+        lastError = externalError.nbgMemoryProviderCompact(limit = 240),
       ),
     )
     queuePrefetchAll(

@@ -49,6 +49,38 @@ internal fun nbgProfilesForStoredApis(entries: List<NbgStoredApi>): NbgModelProv
   return NbgModelProviderProfileState((defaults + custom).distinctBy { it.id })
 }
 
+internal fun nbgProfileForUrlApi(baseUrl: String, modelId: String = ""): NbgModelProviderProfile {
+  val normalized = nbgNormalizeApiBaseUrl(baseUrl)
+  val detected = nbgDefaultModelProviderProfiles().firstOrNull { profile ->
+    profile.baseUrlHint.isNotBlank() && normalized.contains(profile.baseUrlHint, ignoreCase = true)
+  }
+  return detected ?: NbgModelProviderProfile(
+    id = "custom",
+    label = "Custom",
+    baseUrlHint = normalized,
+    apiMode = nbgHanakoProviderForUrlApi(normalized, modelId).ifBlank { "openai" },
+  )
+}
+
+internal fun NbgModelProviderProfile.modelsEndpoint(baseUrl: String): String =
+  nbgApiEndpoint(baseUrl, modelsPath.ifBlank { "/v1/models" })
+
+internal fun NbgModelProviderProfile.chatEndpoint(baseUrl: String): String =
+  nbgApiEndpoint(baseUrl, chatPath.ifBlank { "/v1/chat/completions" })
+
+internal fun NbgModelProviderProfile.applyExtraBody(body: JSONObject): JSONObject {
+  val raw = extraBodyJson.trim()
+  if (raw.isBlank()) return body
+  runCatching {
+    val extra = JSONObject(raw)
+    extra.keys().forEach { key ->
+      val value = extra.opt(key)
+      if (value != null && value != JSONObject.NULL) body.put(key, value)
+    }
+  }
+  return body
+}
+
 internal fun parseNbgModelProviderProfiles(raw: String?): NbgModelProviderProfileState =
   runCatching {
     val root = JSONObject(raw?.takeIf { it.isNotBlank() } ?: "{}")

@@ -19,6 +19,10 @@ data class NbgExternalMemoryProviderConfig(
   val displayName: String,
   val enabled: Boolean = false,
   val endpoint: String = "",
+  val prefetchPath: String = "",
+  val syncPath: String = "",
+  val userId: String = "",
+  val agentId: String = "",
   val accountLabel: String = "",
   val lastSyncAtMs: Long = 0L,
   val lastPrefetchAtMs: Long = 0L,
@@ -75,6 +79,34 @@ internal class NbgExternalMemoryProviderStore(context: Context) {
   fun hasSecret(id: String): Boolean =
     secrets.loadSecret(id.trim()).orEmpty().isNotBlank()
 
+  fun loadSecret(id: String): String? =
+    secrets.loadSecret(id.trim())
+
+  fun recordProviderResult(
+    id: String,
+    lastSyncAtMs: Long? = null,
+    lastPrefetchAtMs: Long? = null,
+    lastError: String? = null,
+  ): NbgExternalMemoryProviderState {
+    val cleanId = id.trim()
+    val current = load()
+    val next = current.copy(
+      providers = current.providers.map { provider ->
+        if (provider.id != cleanId) {
+          provider
+        } else {
+          provider.copy(
+            lastSyncAtMs = lastSyncAtMs ?: provider.lastSyncAtMs,
+            lastPrefetchAtMs = lastPrefetchAtMs ?: provider.lastPrefetchAtMs,
+            lastError = lastError ?: provider.lastError,
+          ).normalized()
+        }
+      },
+    )
+    prefs.edit().putString(KEY_STATE, next.toJsonString()).apply()
+    return next
+  }
+
   private companion object {
     const val PREFS = "nbg_external_memory_providers"
     const val KEY_STATE = "state"
@@ -112,6 +144,10 @@ private fun JSONArray?.toExternalMemoryProviders(): List<NbgExternalMemoryProvid
           displayName = item.cleanString("displayName").orEmpty().ifBlank { kind.label },
           enabled = item.optBoolean("enabled", false),
           endpoint = item.cleanString("endpoint").orEmpty(),
+          prefetchPath = item.cleanString("prefetchPath").orEmpty(),
+          syncPath = item.cleanString("syncPath").orEmpty(),
+          userId = item.cleanString("userId").orEmpty(),
+          agentId = item.cleanString("agentId").orEmpty(),
           accountLabel = item.cleanString("accountLabel").orEmpty(),
           lastSyncAtMs = item.optLong("lastSyncAtMs", 0L).coerceAtLeast(0L),
           lastPrefetchAtMs = item.optLong("lastPrefetchAtMs", 0L).coerceAtLeast(0L),
@@ -129,6 +165,10 @@ private fun NbgExternalMemoryProviderConfig.toJson(): JSONObject =
     .put("displayName", displayName)
     .put("enabled", enabled)
     .put("endpoint", endpoint)
+    .put("prefetchPath", prefetchPath)
+    .put("syncPath", syncPath)
+    .put("userId", userId)
+    .put("agentId", agentId)
     .put("accountLabel", accountLabel)
     .put("lastSyncAtMs", lastSyncAtMs)
     .put("lastPrefetchAtMs", lastPrefetchAtMs)
@@ -140,6 +180,10 @@ private fun NbgExternalMemoryProviderConfig.normalized(): NbgExternalMemoryProvi
     displayName = displayName.trim().ifBlank { kind.label }.take(80),
     enabled = enabled && endpoint.trim().isNotBlank(),
     endpoint = endpoint.trim().take(240),
+    prefetchPath = prefetchPath.trim().take(120),
+    syncPath = syncPath.trim().take(120),
+    userId = userId.trim().take(120),
+    agentId = agentId.trim().take(120),
     accountLabel = accountLabel.trim().take(80),
     lastSyncAtMs = lastSyncAtMs.coerceAtLeast(0L),
     lastPrefetchAtMs = lastPrefetchAtMs.coerceAtLeast(0L),
