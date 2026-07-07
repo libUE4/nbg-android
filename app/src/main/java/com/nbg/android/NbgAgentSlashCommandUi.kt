@@ -47,6 +47,10 @@ internal fun nbgAndroidSlashCommandShortcuts(compressionAvailable: Boolean): Lis
     NbgSlashCommandShortcut("/memory", "Memory", "打开 Memory 管理和本地记忆检索。"),
     NbgSlashCommandShortcut("/provider", "Provider", "打开 URL API 与 ProviderProfile 配置。"),
     NbgSlashCommandShortcut("/usage", "Usage", "打开学习页的 token、成本、延迟和洞察视图。"),
+    NbgSlashCommandShortcut("/ops", "Advanced Ops", "打开 Toolsets Doctor 的分支树、审计、failover 和任务队列。"),
+    NbgSlashCommandShortcut("/knowledge", "Knowledge Pack", "生成 Memory、Skill、会话摘要和索引迁移包。"),
+    NbgSlashCommandShortcut("/offline", "离线模式", "刷新本地历史、Memory、Skill 离线可用状态。"),
+    NbgSlashCommandShortcut("/policy", "权限模板", "打开权限策略模板，快速切换只读研究、安卓构建等模式。"),
     NbgSlashCommandShortcut(
       "/compress",
       "压缩上下文",

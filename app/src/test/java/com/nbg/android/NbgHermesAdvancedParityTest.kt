@@ -507,4 +507,120 @@ class NbgHermesAdvancedParityTest {
     assertEquals(false, preview.changed)
     assertTrue(preview.message.contains("not found"))
   }
+
+  @Test
+  fun advancedOpsParsesFeatureStateAndClassifiesErrors() {
+    val raw = JSONObject()
+      .put(
+        "branchNodes",
+        JSONArray().put(
+          JSONObject()
+            .put("id", "b1")
+            .put("sessionPath", "/tmp/session.jsonl")
+            .put("action", "compress")
+            .put("createdAtMs", 2_000),
+        ),
+      )
+      .put(
+        "auditTimeline",
+        JSONArray().put(
+          JSONObject()
+            .put("id", "a1")
+            .put("kind", "tool")
+            .put("title", "Gradle")
+            .put("severity", "info")
+            .put("createdAtMs", 3_000),
+        ),
+      )
+      .put(
+        "urlApiFailover",
+        JSONObject()
+          .put("enabled", true)
+          .put("attemptCount", 2)
+          .put("successCount", 1)
+          .put("lastReason", "HTTP 429"),
+      )
+      .toString()
+
+    val state = parseNbgAdvancedOpsState(raw)
+    val classified = nbgClassifyAdvancedOpsError("HTTP 400 duplicate Authorization header")
+
+    assertEquals(1, state.branchNodes.size)
+    assertEquals("compress", state.branchNodes.first().action)
+    assertEquals(1, state.auditTimeline.size)
+    assertEquals("tool", state.auditTimeline.first().kind)
+    assertEquals("1/2 成功，最近：HTTP 429", state.urlApiFailover.statusLabel)
+    assertEquals("url_api_400_auth_headers", classified.signature)
+  }
+
+  @Test
+  fun advancedOpsSelectsUrlApiFailoverCandidateAndProbesCapabilities() {
+    val primary = NbgStoredApi(
+      id = "p",
+      name = "Primary",
+      baseUrl = "https://nbgapi.com",
+      apiKey = "secret",
+      models = listOf(NbgApiModel("gpt-5.4")),
+      verifiedModelIds = setOf("gpt-5.4"),
+      selectedModelId = "gpt-5.4",
+      updatedAtMs = 1,
+    )
+    val backup = NbgStoredApi(
+      id = "b",
+      name = "Backup",
+      baseUrl = "https://openrouter.ai/api",
+      apiKey = "secret",
+      models = listOf(NbgApiModel("qwen/qwen3-32b", contextWindow = 32_000)),
+      verifiedModelIds = setOf("qwen/qwen3-32b"),
+      selectedModelId = "qwen/qwen3-32b",
+      updatedAtMs = 2,
+    )
+    val state = NbgAdvancedOpsState(
+      urlApiFailover = NbgUrlApiFailoverState(
+        lastFromProvider = nbgUrlApiProviderId(primary.id),
+        lastFromModel = "gpt-5.4",
+        lastReason = "HTTP 429",
+        lastAtMs = 10_000,
+      ),
+    )
+
+    val candidate = nbgUrlApiFailoverCandidate(listOf(primary, backup), primary, primary.models.first(), state)
+    val probe = nbgBuildModelCapabilityProbe(backup, backup.models.first())
+
+    assertEquals("qwen/qwen3-32b", candidate?.second?.id)
+    assertTrue(nbgShouldPreemptivelyFailoverUrlApi(nbgUrlApiProviderId(primary.id), "gpt-5.4", state, nowMs = 20_000))
+    assertTrue(probe.streaming)
+    assertTrue(probe.tools)
+    assertTrue(probe.jsonMode)
+    assertEquals(32_000, probe.maxTokens)
+  }
+
+  @Test
+  fun advancedOpsBuildsKnowledgePackJson() {
+    val pack = nbgBuildKnowledgePackJson(
+      conversations = listOf(
+        NbgAgentConversation(
+          path = "/tmp/session.jsonl",
+          title = "Build fix",
+          subtitle = "Gradle",
+          snippet = "compile error",
+        ),
+      ),
+      memoryState = HanakoMemoryState(
+        items = listOf(HanakoMemoryItem(id = "m1", title = "Decision", content = "Use URL API failover")),
+        count = 1,
+        enabledCount = 1,
+      ),
+      skillsSnapshot = HanakoSkillsSnapshot(
+        skills = listOf(HanakoSkillSummary(name = "android-build", description = "Build Android apps", enabled = true)),
+      ),
+      generatedAtMs = 123,
+    )
+    val root = JSONObject(pack)
+
+    assertEquals(NBG_ADVANCED_OPS_VERSION, root.getString("version"))
+    assertEquals(1, root.getJSONArray("sessions").length())
+    assertEquals(1, root.getJSONArray("memory").length())
+    assertEquals(1, root.getJSONArray("skills").length())
+  }
 }

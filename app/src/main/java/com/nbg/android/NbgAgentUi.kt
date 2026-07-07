@@ -199,6 +199,7 @@ fun NbgAndroidShell(
   val context = LocalContext.current
   val apiStore = remember(context) { NbgApiStore(context) }
   val usageCostStore = remember(context) { NbgUsageCostStore(context) }
+  val advancedOpsStore = remember(context) { NbgAdvancedOpsStore(context) }
   val providerProfileStore = remember(context) { NbgModelProviderProfileTemplateStore(context) }
   val chatPreferenceStore = remember(context) { NbgChatPreferenceStore(context) }
   val petStore = remember(context) { NbgPetStore(context) }
@@ -221,6 +222,8 @@ fun NbgAndroidShell(
   var slashCommands by remember { mutableStateOf<List<HanakoSlashCommand>>(emptyList()) }
   var slashCommandsLoading by remember { mutableStateOf(false) }
   var slashCommandsError by remember { mutableStateOf<String?>(null) }
+  var advancedOpsState by remember { mutableStateOf(advancedOpsStore.load()) }
+  var pendingBranchAction by remember { mutableStateOf<String?>(null) }
   val apiEditor = rememberNbgAgentApiEditorState()
   val expertReviewState = remember { NbgAgentExpertReviewState() }
   val skillTranslationState = remember { NbgAgentSkillTranslationState() }
@@ -271,6 +274,18 @@ fun NbgAndroidShell(
   }
   fun saveToolsetEnabled(id: NbgToolsetId, enabled: Boolean) {
     chatPreferenceState.applySaved(chatPreferenceStore.saveToolsetEnabled(id, enabled))
+  }
+  fun updateAdvancedOps(next: NbgAdvancedOpsState) {
+    advancedOpsState = next
+  }
+  fun recordAdvancedAudit(kind: String, title: String, detail: String = "", severity: String = "info", sessionPath: String = "") {
+    updateAdvancedOps(advancedOpsStore.recordAudit(kind, title, detail, severity, sessionPath))
+  }
+  fun recordAdvancedError(source: String, message: String) {
+    updateAdvancedOps(advancedOpsStore.recordError(source, message))
+  }
+  fun recordAdvancedBranch(action: String, sessionPath: String, parentSessionPath: String = "", label: String = "", modelLabel: String = "") {
+    updateAdvancedOps(advancedOpsStore.recordBranch(action, sessionPath, parentSessionPath, label, modelLabel))
   }
   fun clearPreferredModel() {
     chatPreferenceState.applySaved(
@@ -782,10 +797,23 @@ fun NbgAndroidShell(
           enqueueThinkingDelta(event.thinkingId, event.delta)
         }
         is HanakoChatEvent.ThinkingEnded -> finishThinking(event.thinkingId)
-        is HanakoChatEvent.SystemMessage -> appendSystemMessage(event.text)
+        is HanakoChatEvent.SystemMessage -> {
+          appendSystemMessage(event.text)
+          recordAdvancedAudit("system", "系统消息", event.text, if (event.text.contains("失败") || event.text.contains("错误")) "warn" else "info", historyState.selectedConversationPath.orEmpty())
+          if (event.text.contains("失败") || event.text.contains("错误") || event.text.contains("HTTP", ignoreCase = true)) {
+            recordAdvancedError("system", event.text)
+          }
+        }
         is HanakoChatEvent.ToolStatus -> {
           if (event.tool.running) streamingControllerState.markStreaming()
           enqueueToolStatus(event.tool)
+          recordAdvancedAudit(
+            kind = "tool",
+            title = event.tool.title.ifBlank { event.tool.kind.ifBlank { "工具调用" } },
+            detail = listOf(event.tool.subtitle, event.tool.detail, event.tool.status).filter { it.isNotBlank() }.joinToString(" · "),
+            severity = if (event.tool.success == false || event.tool.status.contains("fail", ignoreCase = true)) "warn" else "info",
+            sessionPath = historyState.selectedConversationPath.orEmpty(),
+          )
         }
         HanakoChatEvent.ToolInterrupted -> {
           streamingControllerState.markIdle()
@@ -819,6 +847,7 @@ fun NbgAndroidShell(
         }
         is HanakoChatEvent.AgentModelConfigFailed -> {
           modelConfigState.applyFailed(event.message)
+          recordAdvancedError("model_config", event.message)
         }
         is HanakoChatEvent.SlashCommandsLoaded -> {
           slashCommands = event.commands
@@ -851,6 +880,15 @@ fun NbgAndroidShell(
         }
         is HanakoChatEvent.HistoryLoaded -> {
           if (!shouldAcceptHistoryLoaded(event)) return@HanakoChatController
+          pendingBranchAction?.let { action ->
+            recordAdvancedBranch(
+              action = action,
+              sessionPath = event.sessionPath,
+              parentSessionPath = selectedConversationPath.orEmpty(),
+              label = event.sessionPath.substringAfterLast('/'),
+            )
+            pendingBranchAction = null
+          }
           val activePath = selectedConversationPath
           if (hasLiveUiWork() && (activePath == null || event.sessionPath == activePath)) {
             historyState.deferHistoryLoaded(event)
@@ -902,6 +940,7 @@ fun NbgAndroidShell(
         hanako.loadAgentModelConfig()
       }
       "/tools" -> shellState.showPage(NbgShellPage.ToolsetsDoctor)
+      "/ops", "/policy", "/knowledge", "/offline" -> shellState.showPage(NbgShellPage.ToolsetsDoctor)
       "/skills" -> shellState.showPage(NbgShellPage.Skills)
       "/memory" -> shellState.showPage(NbgShellPage.Memory)
       "/provider" -> {
@@ -914,6 +953,8 @@ fun NbgAndroidShell(
       }
       "/compress" -> {
         historyState.requestNewConversation()
+        pendingBranchAction = "compress"
+        recordAdvancedAudit("branch", "请求压缩分支", selectedConversationPath.orEmpty())
         hanako.compressForkSession()
       }
       else -> hanako.sendPrompt(trimmed, displayText = trimmed)
@@ -1005,6 +1046,112 @@ fun NbgAndroidShell(
     ?: preferredThinkingLevel
   val displayThinkingLabel = hanakoThinkingLevelLabel(displayThinkingLevel)
   val displayRunStatus = nbgChatRunStatusWithDisplayModel(hanakoState, messages, displayModelName)
+  fun refreshAdvancedOfflineMode() {
+    updateAdvancedOps(
+      advancedOpsStore.updateOfflineMode(
+        historyCount = conversations.size,
+        memoryCount = hanakoState.memoryState.enabledCount,
+        skillCount = hanakoState.skillsSnapshot.visibleSkills.size,
+        label = "history/memory/skills local cache",
+      ),
+    )
+  }
+  fun probeAdvancedModelCapabilities() {
+    val customProfiles = providerProfileStore.loadCustomProfiles()
+    val models = savedApis.flatMap { entry ->
+      val candidates = entry.models.ifEmpty { entry.verifiedModelIds.map { NbgApiModel(it) } }
+      candidates
+        .filter { model -> model.id.isNotBlank() && (entry.verifiedModelIds.isEmpty() || model.id in entry.verifiedModelIds) }
+        .take(3)
+        .map { entry to it }
+    }.take(24)
+    var next = advancedOpsState
+    models.forEach { (entry, model) ->
+      next = advancedOpsStore.recordModelProbe(
+        nbgBuildModelCapabilityProbe(
+          entry = entry,
+          model = model,
+          providerProfiles = customProfiles,
+          status = "local_probe",
+        ),
+      )
+    }
+    updateAdvancedOps(next)
+    recordAdvancedAudit("model_probe", "模型能力探测完成", "已探测 ${models.size} 个 URL API 模型")
+  }
+  fun snapshotAdvancedPromptVersions() {
+    var count = 0
+    val providerTemplates = providerProfileStore.exportTemplates()
+    if (providerTemplates.isNotBlank()) {
+      updateAdvancedOps(
+        advancedOpsStore.snapshotPromptVersion(
+          scope = "provider_profile",
+          name = "ProviderProfile templates",
+          content = providerTemplates,
+          summary = "auth/header/extra body templates",
+        ),
+      )
+      count += 1
+    }
+    hanakoState.skillsSnapshot.visibleSkills.take(20).forEach { skill ->
+      val prompt = listOf(skill.name, skill.description, skill.filePath).joinToString("\n")
+      if (prompt.isNotBlank()) {
+        updateAdvancedOps(
+          advancedOpsStore.snapshotPromptVersion(
+            scope = "skill_prompt",
+            name = skill.name,
+            content = prompt,
+            summary = skill.displayDescription.take(120),
+          ),
+        )
+        count += 1
+      }
+    }
+    updateAdvancedOps(
+      advancedOpsStore.snapshotPromptVersion(
+        scope = "system",
+        name = "Android URL API reviewer",
+        content = "你是只读专家评审模型。不要调用工具，不要要求写文件，只输出评审意见。",
+        summary = "URL API expert review system prompt",
+      ),
+    )
+    recordAdvancedAudit("prompt_version", "Prompt 版本快照完成", "记录 $count 个 provider/skill/system prompt 版本")
+  }
+  fun buildAdvancedKnowledgePack() {
+    val itemCount = conversations.size + hanakoState.memoryState.enabledCount + hanakoState.skillsSnapshot.visibleSkills.size
+    val byteSize = nbgAdvancedOpsKnowledgePackSizeEstimate(
+      historyCount = conversations.size,
+      memoryCount = hanakoState.memoryState.enabledCount,
+      skillCount = hanakoState.skillsSnapshot.visibleSkills.size,
+    )
+    val generatedAtMs = System.currentTimeMillis()
+    val packDir = java.io.File(context.filesDir, "knowledge-packs").also { it.mkdirs() }
+    val packFile = java.io.File(packDir, "knowledge-pack-$generatedAtMs.json")
+    val packJson = nbgBuildKnowledgePackJson(
+      conversations = conversations,
+      memoryState = hanakoState.memoryState,
+      skillsSnapshot = hanakoState.skillsSnapshot,
+      generatedAtMs = generatedAtMs,
+    )
+    runCatching {
+      packFile.writeText(packJson, Charsets.UTF_8)
+    }.onSuccess {
+      updateAdvancedOps(advancedOpsStore.recordKnowledgePack("Android Knowledge Pack", itemCount, packFile.length(), packFile.absolutePath, generatedAtMs))
+      recordAdvancedAudit("knowledge_pack", "Knowledge Pack 已生成", "$itemCount 项 · ${packFile.length() / 1024} KB · ${packFile.name}")
+    }.onFailure { error ->
+      val message = error.message ?: error.javaClass.simpleName
+      recordAdvancedError("knowledge_pack", message)
+    }
+  }
+  fun enqueueAdvancedBackgroundTask() {
+    updateAdvancedOps(
+      advancedOpsStore.enqueueTask(
+        title = "Advanced Ops maintenance",
+        detail = "刷新离线索引、模型能力探测、错误知识库聚合和 Knowledge Pack 元数据",
+      ),
+    )
+    recordAdvancedAudit("task_queue", "后台任务已入队", "Advanced Ops maintenance")
+  }
   fun translateSkillDescription(skill: HanakoSkillSummary) {
     if (skillTranslationState.isTranslating) return
     val selected = nbgSelectedUrlApi(savedApis, selectedUrlApiModel)
@@ -1446,19 +1593,23 @@ fun NbgAndroidShell(
           if (model.provider.startsWith("urlapi-")) {
             val entry = savedApis.firstOrNull { nbgUrlApiProviderId(it.id) == model.provider }
             val apiModel = entry?.models?.firstOrNull { it.id == model.id }
-            if (entry != null && apiModel != null) {
-              val next = entry.copy(selectedModelId = apiModel.id)
-              urlApiEntriesState.applySaved(apiStore.save(next))
-              urlApiSelectionState.select(NbgSelectedUrlApiModel(model.provider, apiModel.id, apiModel.label))
-              savePreferredModel(model)
-              modelConfigState.beginLoad()
-              hanako.switchUrlApiModel(next, apiModel)
-            } else {
+          if (entry != null && apiModel != null) {
+            val next = entry.copy(selectedModelId = apiModel.id)
+            urlApiEntriesState.applySaved(apiStore.save(next))
+            urlApiSelectionState.select(NbgSelectedUrlApiModel(model.provider, apiModel.id, apiModel.label))
+            savePreferredModel(model)
+            recordAdvancedBranch("switch_model", hanakoState.sessionPath.orEmpty(), label = "URL API ${apiModel.label}", modelLabel = apiModel.id)
+            recordAdvancedAudit("model", "切换 URL API 模型", "${entry.name} · ${apiModel.id}")
+            modelConfigState.beginLoad()
+            hanako.switchUrlApiModel(next, apiModel)
+          } else {
               modelConfigState.recordLocalError("没有找到已保存的网址 API 模型")
             }
           } else {
             urlApiSelectionState.clearSelectedModel()
             savePreferredModel(model)
+            recordAdvancedBranch("switch_model", hanakoState.sessionPath.orEmpty(), label = model.label, modelLabel = model.id)
+            recordAdvancedAudit("model", "切换模型", "${model.provider} · ${model.id}")
             modelConfigState.beginLoad()
             hanako.switchModel(model)
           }
@@ -1470,10 +1621,16 @@ fun NbgAndroidShell(
           savePreferredThinkingLevel(level)
           hanako.setThinkingLevel(level)
         },
-        onReplayLatestTurn = hanako::replayLatestTurn,
+        onReplayLatestTurn = {
+          pendingBranchAction = "replay"
+          recordAdvancedBranch("replay", hanakoState.sessionPath.orEmpty(), label = "重新生成上一轮", modelLabel = displayModelName)
+          hanako.replayLatestTurn()
+        },
         onRequestRevertLatestTurn = { confirmationState.openRevertTurnConfirm() },
         onCompressFork = {
           historyState.requestNewConversation()
+          pendingBranchAction = "compress"
+          recordAdvancedAudit("branch", "请求压缩分支", hanakoState.sessionPath.orEmpty())
           hanako.compressForkSession()
         },
         onOpenSlashCommands = { openSlashCommandCenter() },
@@ -1481,7 +1638,32 @@ fun NbgAndroidShell(
         onSend = { prompt ->
           val selected = nbgSelectedUrlApi(savedApis, selectedUrlApiModel)
           if (selected != null) {
-            hanako.sendPromptWithUrlApi(prompt, selected.first, selected.second, displayText = prompt)
+            val fallback = nbgUrlApiFailoverCandidate(savedApis, selected.first, selected.second, advancedOpsState)
+            val activeSelection = if (
+              fallback != null &&
+              nbgShouldPreemptivelyFailoverUrlApi(nbgUrlApiProviderId(selected.first.id), selected.second.id, advancedOpsState)
+            ) {
+              updateAdvancedOps(
+                advancedOpsStore.recordUrlApiFailover(
+                  fromProvider = nbgUrlApiProviderId(selected.first.id),
+                  fromModel = selected.second.id,
+                  toProvider = nbgUrlApiProviderId(fallback.first.id),
+                  toModel = fallback.second.id,
+                  reason = "preemptive recent failure",
+                  ok = true,
+                ),
+              )
+              fallback
+            } else {
+              selected
+            }
+            hanako.sendPromptWithUrlApi(
+              prompt,
+              activeSelection.first,
+              activeSelection.second,
+              displayText = prompt,
+              fallback = fallback,
+            )
           } else {
             hanako.sendPrompt(prompt, displayText = prompt)
           }
@@ -1564,7 +1746,10 @@ fun NbgAndroidShell(
         onClearTrajectoryExport = { hanako.clearTrajectoryExport() },
         onBuildRecall = { hanako.buildLearningRecallForCurrentSession() },
         onRefreshContextInsights = { hanako.refreshContextInsights() },
-        onCompressContext = { hanako.compressForkSession() },
+        onCompressContext = {
+          pendingBranchAction = "compress"
+          hanako.compressForkSession()
+        },
         onSetContextCompressionMode = { hanako.setContextCompressionMode(it) },
         onSearchLocalSessionsFts = { hanako.searchLocalSessionsFts(it) },
         onApproveEvent = { hanako.approveLearningEvent(it) },
@@ -1763,9 +1948,31 @@ fun NbgAndroidShell(
         sessionCount = conversations.size,
         savedUrlApiCount = savedApis.size,
         compressionAvailable = hanakoState.compressionAvailable,
+        advancedOpsState = advancedOpsState,
         onBack = { shellState.showChat() },
         onOpenDrawer = { scope.launch { drawerState.open() } },
         onSetToolsetEnabled = ::saveToolsetEnabled,
+        onSetUrlApiFailoverEnabled = {
+          updateAdvancedOps(advancedOpsStore.updateFailoverEnabled(it))
+          recordAdvancedAudit("url_api_failover", if (it) "URL API failover 已开启" else "URL API failover 已关闭")
+        },
+        onProbeModelCapabilities = { probeAdvancedModelCapabilities() },
+        onSnapshotPromptVersions = { snapshotAdvancedPromptVersions() },
+        onBuildKnowledgePack = { buildAdvancedKnowledgePack() },
+        onRefreshOfflineMode = { refreshAdvancedOfflineMode() },
+        onEnqueueBackgroundTask = { enqueueAdvancedBackgroundTask() },
+        onApplyPermissionTemplate = { template ->
+          savePreferredPermissionMode(template.permissionMode)
+          savePreferredThinkingLevel(template.thinkingLevel)
+          saveMultiAgentEnabled(template.multiAgentEnabled)
+          requestPreferredPermissionMode(template.permissionMode)
+          hanako.setThinkingLevel(template.thinkingLevel)
+          recordAdvancedAudit("permission_template", "已应用权限模板", "${template.label} · ${template.permissionMode} · ${template.thinkingLevel}")
+        },
+        onOpenBranchSession = { path ->
+          hanako.selectSession(path)
+          shellState.showChat()
+        },
         onOpenTerminal = { shellState.showPage(NbgShellPage.Terminal) },
         onOpenAgents = { shellState.showPage(NbgShellPage.Agents) },
         onOpenMcp = { shellState.showPage(NbgShellPage.Mcp) },
@@ -1785,6 +1992,8 @@ fun NbgAndroidShell(
       onDismiss = { confirmationState.dismissRevertTurnConfirm() },
       onConfirm = {
         confirmationState.dismissRevertTurnConfirm()
+        pendingBranchAction = "revert"
+        recordAdvancedBranch("revert", hanakoState.sessionPath.orEmpty(), label = "撤回上一轮", modelLabel = displayModelName)
         hanako.revertLatestTurn()
       },
     )

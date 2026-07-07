@@ -66,6 +66,7 @@ class HanakoChatController(
   private val contextCompressionStrategyStore = NbgContextCompressionStrategyStore(appContext)
   private val sessionFtsIndexStore = NbgSessionFtsIndexStore(appContext)
   private val usageCostStore = NbgUsageCostStore(appContext)
+  private val advancedOpsStore = NbgAdvancedOpsStore(appContext)
   private val scheduleStore = NbgScheduleStore(appContext)
   private val gatewayInboxStore = NbgGatewayInboxStore(appContext)
   private var latestContextUsage = NbgContextUsageSnapshot()
@@ -772,6 +773,21 @@ class HanakoChatController(
     }
   }
 
+  private suspend fun configureUrlApiSelectionForSession(
+    info: HanakoServerInfo,
+    sessionPath: String,
+    entry: NbgStoredApi,
+    model: NbgApiModel,
+  ) {
+    val providerId = nbgUrlApiProviderId(entry.id)
+    withLocalHanakoRetry(info) { activeInfo ->
+      withContext(Dispatchers.IO) {
+        http.configureUrlApiModel(activeInfo, entry, model, currentModelProviderProfiles())
+        http.switchSessionModel(activeInfo, sessionPath, model.id, providerId)
+      }
+    }
+  }
+
   fun sendPrompt(text: String, displayText: String = text) {
     val prompt = text.trim()
     if (prompt.startsWith("/") && handleLocalSlash(prompt)) return
@@ -783,7 +799,13 @@ class HanakoChatController(
     }
   }
 
-  fun sendPromptWithUrlApi(text: String, entry: NbgStoredApi, model: NbgApiModel, displayText: String = text) {
+  fun sendPromptWithUrlApi(
+    text: String,
+    entry: NbgStoredApi,
+    model: NbgApiModel,
+    displayText: String = text,
+    fallback: Pair<NbgStoredApi, NbgApiModel>? = null,
+  ) {
     val prompt = text.trim()
     if (prompt.isBlank()) return
     if (prompt.startsWith("/") && handleLocalSlash(prompt)) return
@@ -792,7 +814,7 @@ class HanakoChatController(
       sendSlash(prompt)
       return
     }
-    sendPromptInternal(prompt, entry to model, displayText = displayText)
+    sendPromptInternal(prompt, entry to model, urlApiFallbackSelection = fallback, displayText = displayText)
   }
 
   fun sendMultiAgentPrompt(text: String, displayText: String = text) {
@@ -1129,6 +1151,7 @@ class HanakoChatController(
   private fun sendPromptInternal(
     text: String,
     urlApiSelection: Pair<NbgStoredApi, NbgApiModel>? = null,
+    urlApiFallbackSelection: Pair<NbgStoredApi, NbgApiModel>? = null,
     displayText: String = text,
     multiAgentMode: Boolean = false,
   ) {
@@ -1180,14 +1203,43 @@ class HanakoChatController(
       }.getOrNull() ?: return@launch
       urlApiSelection?.let { (entry, model) ->
         val providerId = nbgUrlApiProviderId(entry.id)
-        runCatching {
-          withLocalHanakoRetry(info) { activeInfo ->
-            withContext(Dispatchers.IO) {
-              http.configureUrlApiModel(activeInfo, entry, model, currentModelProviderProfiles())
-              http.switchSessionModel(activeInfo, sessionPath, model.id, providerId)
-            }
+        val primary = runCatching {
+          configureUrlApiSelectionForSession(info, sessionPath, entry, model)
+        }
+        if (primary.isFailure) {
+          val primaryError = primary.exceptionOrNull()
+          val fallback = urlApiFallbackSelection?.takeIf { (fallbackEntry, fallbackModel) ->
+            fallbackEntry.id != entry.id || fallbackModel.id != model.id
           }
-        }.onFailure { error ->
+          if (fallback != null) {
+            val (fallbackEntry, fallbackModel) = fallback
+            val fallbackProviderId = nbgUrlApiProviderId(fallbackEntry.id)
+            val fallbackResult = runCatching {
+              configureUrlApiSelectionForSession(info, sessionPath, fallbackEntry, fallbackModel)
+            }
+            if (fallbackResult.isSuccess) {
+              advancedOpsStore.recordUrlApiFailover(
+                fromProvider = providerId,
+                fromModel = model.id,
+                toProvider = fallbackProviderId,
+                toModel = fallbackModel.id,
+                reason = primaryError?.message ?: primaryError?.javaClass?.simpleName ?: "primary failed",
+                ok = true,
+              )
+              onEvent(HanakoChatEvent.SystemMessage("URL API 自动故障转移：${model.id} -> ${fallbackModel.id}"))
+              return@let
+            }
+            val fallbackError = fallbackResult.exceptionOrNull()
+            advancedOpsStore.recordUrlApiFailover(
+              fromProvider = providerId,
+              fromModel = model.id,
+              toProvider = fallbackProviderId,
+              toModel = fallbackModel.id,
+              reason = fallbackError?.message ?: fallbackError?.javaClass?.simpleName ?: "fallback failed",
+              ok = false,
+            )
+          }
+          val error = primaryError ?: IllegalStateException("URL API primary model failed")
           handleHanakoLocalApiFailure(info, error)
           val message = error.message ?: error.javaClass.simpleName
           _state.update { it.copy(lastError = message, streaming = false) }
